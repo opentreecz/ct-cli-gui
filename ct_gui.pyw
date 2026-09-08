@@ -28,7 +28,7 @@ def get_console_python():
 def launch_download(command):
     options = {"cwd": DOWNLOAD_DIR}
     if sys.platform == "win32":
-        options["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+        options["creationflags"] = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
     elif sys.platform == "darwin":
         shell_command = " ".join(shlex.quote(argument) for argument in command)
         shell_command = f"cd {shlex.quote(str(DOWNLOAD_DIR))} && {shell_command}"

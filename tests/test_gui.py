@@ -82,7 +82,7 @@ def test_launch_download_uses_macos_terminal(monkeypatch, tmp_path):
 
 def test_get_console_python_uses_python_on_windows(monkeypatch):
     monkeypatch.setattr(ct_gui.sys, "platform", "win32")
-    monkeypatch.setattr(ct_gui.sys, "executable", r"C:\Python\pythonw.exe")
+    monkeypatch.setattr(ct_gui.sys, "executable", "/Python/pythonw.exe")
 
     assert ct_gui.get_console_python().name == "python.exe"
 
@@ -101,7 +101,7 @@ def test_launch_download_uses_windows_console(monkeypatch, tmp_path):
 
     assert calls[0][1] == {
         "cwd": tmp_path,
-        "creationflags": ct_gui.subprocess.CREATE_NEW_CONSOLE,
+        "creationflags": getattr(ct_gui.subprocess, "CREATE_NEW_CONSOLE", 0),
     }
 
 
