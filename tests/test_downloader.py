@@ -268,3 +268,147 @@ def test_main_rejects_invalid_url(monkeypatch, capsys):
     ct_downloader.main()
 
     assert "Invalid Česká televize URL format" in capsys.readouterr().out
+
+
+def test_download_episode_handles_poster_failure(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: (
+            '<title>Episode - Series</title>'
+            '<meta property="og:image" content="https://media.example/poster.jpg">'
+        ),
+    )
+
+    def fail_download(*args, **kwargs):
+        raise OSError("poster unavailable")
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", fail_download)
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"stream": "https://media.example/episode.mpd"}'
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        ct_downloader.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 1})(),
+    )
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert "Could not download episode poster" in capsys.readouterr().out
+
+
+def test_download_episode_handles_subtitle_failure(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>1/10 Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return (
+                b'{"subtitle": "https://media.example/subtitle.vtt", '
+                b'"stream": "https://media.example/episode.mpd"}'
+            )
+
+    def fail_subtitle(url, filename):
+        raise OSError("subtitle unavailable")
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", fail_subtitle)
+    monkeypatch.setattr(
+        ct_downloader.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 1})(),
+    )
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert "Could not download or convert subtitles" in capsys.readouterr().out
+
+
+def test_download_episode_handles_stream_connection_error(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>Episode - Series</title>",
+    )
+    monkeypatch.setattr(
+        ct_downloader.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")),
+    )
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert "Connection error getting stream" in capsys.readouterr().out
+
+
+def test_download_episode_restores_video_when_subtitle_embedding_fails(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>1/10 Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return (
+                b'{"subtitle": "https://media.example/subtitle.vtt", '
+                b'"stream": "https://media.example/episode.mpd"}'
+            )
+
+    def download(url, filename):
+        (tmp_path / filename).write_text("subtitle")
+
+    def run(command, **kwargs):
+        if command[0] == "yt-dlp":
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
+            return type("Result", (), {"returncode": 0})()
+        (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text("converted")
+        return type("Result", (), {"returncode": 1})()
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert (tmp_path / "Series - S1E01 - Episode.mp4").read_text() == "video"
+    assert "Failed to embed subtitles" in capsys.readouterr().out
