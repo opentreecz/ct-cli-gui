@@ -208,3 +208,63 @@ def test_main_dispatches_series_episodes(monkeypatch):
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "https://www.ceskatelevize.cz/porady/123-show/12345678902/",
     ]
+
+
+def test_download_episode_skips_existing_file(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "Episode - Series.mp4").write_text("existing")
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>Episode - Series</title>",
+    )
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_download_episode_reports_failed_video_download(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"stream": "https://media.example/episode.mpd"}'
+
+    monkeypatch.setattr(
+        ct_downloader.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: Response(),
+    )
+    monkeypatch.setattr(
+        ct_downloader.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 1})(),
+    )
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert "Video download failed" in capsys.readouterr().out
+
+
+def test_main_rejects_invalid_url(monkeypatch, capsys):
+    monkeypatch.setattr(ct_downloader.sys, "argv", ["ct_downloader.py", "not-a-url"])
+
+    ct_downloader.main()
+
+    assert "Invalid Česká televize URL format" in capsys.readouterr().out
