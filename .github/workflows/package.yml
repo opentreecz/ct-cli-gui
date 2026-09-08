@@ -47,7 +47,7 @@ jobs:
       url: https://pypi.org/p/ct-cli-gui
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-distributions
           path: dist/
