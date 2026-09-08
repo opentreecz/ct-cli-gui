@@ -128,6 +128,25 @@ export CT_DOWNLOAD_DIR="$HOME/Videos/Ceska televize"
 python3 ct_gui.pyw
 ```
 
+## 📦 Install the CLI from PyPI
+
+The command-line downloader can be installed as a Python package:
+
+```sh
+python -m pip install ct-cli-gui
+ct-dlp "https://www.ceskatelevize.cz/porady/..."
+```
+
+This package installs the `ct-dlp` CLI and its `yt-dlp` dependency. It does
+not install the Tkinter GUI or FFmpeg; install Tkinter and FFmpeg through your
+operating system and use `ct_gui.pyw` from the repository for the desktop GUI.
+
+To publish a new package version, update the `version` field in `pyproject.toml`,
+create a matching tag such as `v1.0.1`, and push the tag. The package workflow
+builds the wheel and source distribution and publishes them to PyPI using
+trusted publishing. Configure a PyPI project named `ct-cli-gui` and a
+repository publishing environment named `pypi` before the first release.
+
 ## 💻 Usage
 
 ### Option 1: The Desktop GUI
