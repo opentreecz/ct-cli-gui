@@ -31,4 +31,4 @@ jobs:
         run: python -m compileall -q .
 
       - name: Run smoke tests
-        run: python -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=50 -q
+        run: python -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=70 -q

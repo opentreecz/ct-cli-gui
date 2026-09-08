@@ -81,7 +81,7 @@ def test_download_episode_reports_missing_stream(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         ct_downloader,
         "get_html",
-        lambda url: "<title>Episode - Series</title>",
+        lambda url: "<title>1/10 Episode - Series</title>",
     )
 
     class Response:
@@ -101,3 +101,110 @@ def test_download_episode_reports_missing_stream(monkeypatch, tmp_path, capsys):
     )
 
     assert "Stream URL not found" in capsys.readouterr().out
+
+
+def test_download_episode_passes_quality_to_ytdlp(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>1/10 Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"stream": "https://media.example/episode.mpd"}'
+
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        (tmp_path / "Series - S1E01 - Episode.mp4").touch()
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        quality="720",
+    )
+
+    assert commands == [["yt-dlp", "-o", "Series - S1E01 - Episode.mp4", "-S", "res:720",
+                         "https://media.example/episode.mpd"]]
+
+
+def test_download_episode_embeds_subtitles(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>1/10 Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return (
+                b'{"subtitle": "https://media.example/subtitle.vtt", '
+                b'"stream": "https://media.example/episode.mpd"}'
+            )
+
+    def download(url, filename):
+        (tmp_path / filename).write_text("subtitle")
+
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[0] == "yt-dlp":
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
+        elif len(command) > 5:
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("embedded")
+        else:
+            (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text("converted")
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/"
+    )
+
+    assert len(calls) == 3
+    assert "Subtitles successfully embedded" in capsys.readouterr().out
+
+
+def test_main_dispatches_series_episodes(monkeypatch):
+    called = []
+    monkeypatch.setattr(ct_downloader, "download_episode", lambda url, quality: called.append(url))
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "/porady/123-show/12345678901/ /porady/123-show/12345678902/",
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        ["ct_downloader.py", "https://www.ceskatelevize.cz/porady/123-show/"],
+    )
+
+    ct_downloader.main()
+
+    assert called == [
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "https://www.ceskatelevize.cz/porady/123-show/12345678902/",
+    ]

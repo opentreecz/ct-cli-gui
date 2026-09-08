@@ -42,3 +42,39 @@ def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch,
             {"cwd": tmp_path},
         )
     ]
+
+
+def test_launch_download_uses_linux_terminal(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(ct_gui.sys, "platform", "linux")
+    monkeypatch.setattr(
+        ct_gui.shutil,
+        "which",
+        lambda name: "/usr/bin/gnome-terminal" if name == "gnome-terminal" else None,
+    )
+    monkeypatch.setattr(
+        ct_gui.subprocess,
+        "Popen",
+        lambda command, **options: calls.append((command, options)),
+    )
+    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
+
+    ct_gui.launch_download(["python", "ct_downloader.py"])
+
+    assert calls[0][0] == ["gnome-terminal", "--", "python", "ct_downloader.py"]
+
+
+def test_launch_download_uses_macos_terminal(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(ct_gui.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        ct_gui.subprocess,
+        "Popen",
+        lambda command, **options: calls.append((command, options)),
+    )
+    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
+
+    ct_gui.launch_download(["python", "ct_downloader.py", "URL with spaces"])
+
+    assert calls[0][0][0] == "osascript"
+    assert "Terminal" in calls[0][0][2]
