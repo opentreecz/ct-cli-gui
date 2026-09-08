@@ -1,6 +1,6 @@
 # Česká televize (iVysílání) Downloader 📺
 
-A custom, native Windows toolkit (CLI + GUI) for downloading high-quality, DRM-free shows and documentaries from the Česká televize (iVysílání) archive. 
+A cross-platform Python toolkit (CLI + GUI) for downloading high-quality, DRM-free shows and documentaries from the Česká televize (iVysílání) archive.
 
 This project bypasses recent site API changes (which break standard extractors) by directly querying the official backend to retrieve raw MPEG-DASH streams. It processes the video, audio, subtitles, and artwork to create clean, Plex-ready media files.
 
@@ -12,42 +12,150 @@ This project bypasses recent site API changes (which break standard extractors) 
 * **Automatic Subtitles:** Downloads official Czech closed captions, silently converts them from web `.vtt` to standard `.srt`, and soft-embeds them directly into the `.mp4` file (while keeping the external `.srt` file for media servers).
 * **Artwork Fetching:** Scrapes and saves the official high-resolution episode poster as a `.jpg`.
 * **Quality Selection:** Choose your maximum resolution limit (1080p, 720p, 540p, 360p) to save hard drive space.
-* **Two Interfaces:** Includes a seamless desktop GUI and a native command-line wrapper.
+* **Two Interfaces:** Includes a desktop GUI and command-line wrappers for Windows, Linux, and macOS.
 
 ## 🛠️ Prerequisites
 
-To run this tool, you need the following installed and accessible on your Windows machine:
-1. **Python 3.x**
+To run this tool, you need the following installed and accessible in your `PATH`:
+1. **Python 3.9 or newer**
 2. **`yt-dlp`** (The core downloading engine)
 3. **`ffmpeg`** (Required to merge DASH video/audio streams and embed subtitles)
+4. **Tkinter** (required by the GUI; on Debian/Ubuntu install `python3-tk`)
+
+The GUI uses the standard Python Tkinter library. On macOS and Windows it is
+normally included with the official Python installer. Linux distributions may
+provide it as a separate package.
+
+Python runtime dependencies are listed in `requirements.txt`.
 
 ## 🚀 Installation & Setup
 
-1. **Clone or Download this repository:**
-   Extract the files to your preferred script directory.
+Follow the procedure for your operating system. Keep these files together in
+one installation directory:
 
-2. **Set up the Command Line Wrapper (`ct-dlp`):**
-   * Ensure the folder containing the scripts is added to your Windows `PATH` environment variable.
-   * If you haven't already, run the following in PowerShell inside that folder to generate the executable wrapper:
-     ```powershell
-     $lines = "@echo off", 'python "%~dp0ct_downloader.py" %*'
-     [System.IO.File]::WriteAllLines("$PWD\ct-dlp.bat", $lines)
-     ```
+```text
+ct_gui.pyw
+ct_downloader.py
+ct-dlp.bat    # Windows
+ct-dlp        # Linux/macOS
+```
 
-3. **Set up the GUI Desktop App:**
-   * Right-click `ct_gui.pyw` and select **Create shortcut**.
-   * Move the shortcut to your Desktop.
-   * *(Optional)* Right-click the shortcut, go to Properties -> Change Icon, and give it a custom app icon.
-   * **Note:** Edit line 10 in `ct_gui.pyw` (`download_dir = r"C:\Users\...\Videos"`) to match your preferred download destination so the terminal opens in the correct folder.
+### Windows
+
+1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/windows/).
+   During setup, enable **Add Python to PATH**.
+2. Install `yt-dlp`:
+   ```powershell
+   py -m pip install --upgrade -r requirements.txt
+   ```
+3. Install `ffmpeg` and add its `bin` directory to `PATH`.
+4. Download or clone this repository, then open PowerShell in its directory.
+5. Run the GUI by double-clicking `ct_gui.pyw`, or create a desktop shortcut.
+6. To use the CLI, add the repository directory to `PATH`, then run:
+   ```powershell
+   .\ct-dlp.bat "https://www.ceskatelevize.cz/porady/..."
+   ```
+
+### Linux
+
+1. Install Python, Tkinter, and FFmpeg using your distribution's package manager.
+   On Debian or Ubuntu:
+   ```sh
+   sudo apt update
+   sudo apt install python3 python3-tk python3-pip ffmpeg
+   ```
+2. Install `yt-dlp`:
+   ```sh
+   python3 -m pip install --user --upgrade -r requirements.txt
+   ```
+3. Download or clone this repository, then open a terminal in its directory.
+4. Make the CLI launcher executable:
+   ```sh
+   chmod +x ct-dlp
+   ```
+5. Start the GUI:
+   ```sh
+   python3 ct_gui.pyw
+   ```
+6. Run the CLI:
+   ```sh
+   ./ct-dlp "https://www.ceskatelevize.cz/porady/..."
+   ```
+
+### macOS
+
+1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/macos/)
+   or with Homebrew:
+   ```sh
+   brew install python
+   ```
+2. Install FFmpeg with Homebrew:
+   ```sh
+   brew install ffmpeg
+   ```
+3. Install `yt-dlp`:
+   ```sh
+   python3 -m pip install --user --upgrade -r requirements.txt
+   ```
+4. Download or clone this repository, then open Terminal in its directory.
+5. Make the CLI launcher executable:
+   ```sh
+   chmod +x ct-dlp
+   ```
+6. Start the GUI:
+   ```sh
+   python3 ct_gui.pyw
+   ```
+7. Run the CLI:
+   ```sh
+   ./ct-dlp "https://www.ceskatelevize.cz/porady/..."
+   ```
+
+### Optional download directory
+
+The default output directory is the current user's `Videos` folder. Set
+`CT_DOWNLOAD_DIR` before starting the GUI to choose another location:
+
+```powershell
+# Windows PowerShell
+$env:CT_DOWNLOAD_DIR = "D:\Media\Ceska televize"
+py .\ct_gui.pyw
+```
+
+```sh
+# Linux/macOS
+export CT_DOWNLOAD_DIR="$HOME/Videos/Ceska televize"
+python3 ct_gui.pyw
+```
 
 ## 💻 Usage
 
 ### Option 1: The Desktop GUI
-Simply double-click your Desktop shortcut. Paste an episode or series URL from iVysílání, select your maximum desired quality from the dropdown menu, and click **Download Video**. A terminal will pop up showing the background progress.
+Start `ct_gui.pyw` using the command for your operating system. Paste an episode or series URL from iVysílání, select a maximum quality, and click **Download Video**. The GUI launches the downloader in a new terminal where supported.
 
 ### Option 2: The Command Line (CLI)
-Open PowerShell in your target download folder and use your new custom command:
+Open a terminal in your target download folder and use the wrapper for your operating system:
 
 **Download a single episode:**
-```powershell
-ct-dlp "[https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/](https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/)"
+```text
+# Windows
+ct-dlp.bat "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/"
+
+# Linux/macOS
+ct-dlp "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/"
+
+## ✅ Development checks
+
+Install the development dependencies and run the same checks used by GitHub
+Actions:
+
+```sh
+python3 -m pip install -r requirements-dev.txt
+python3 -m ruff check .
+python3 -m compileall -q .
+python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=85 -q
+```
+
+The tests use mocked network and subprocess calls, so they do not contact
+Česká televize or download media files. The GitHub Actions workflow runs these
+checks on Windows, Linux, and macOS.
