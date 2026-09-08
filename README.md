@@ -162,6 +162,17 @@ ct-dlp.bat "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/21556226
 
 # Linux/macOS
 ct-dlp "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/"
+```
+
+**Download a series:**
+
+```text
+# Windows
+ct-dlp.bat "https://www.ceskatelevize.cz/porady/..."
+
+# Linux/macOS
+./ct-dlp "https://www.ceskatelevize.cz/porady/..."
+```
 
 ## ✅ Development checks
 
@@ -178,3 +189,26 @@ python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --c
 The tests use mocked network and subprocess calls, so they do not contact
 Česká televize or download media files. The GitHub Actions workflow runs these
 checks on Windows, Linux, and macOS.
+
+## 📤 Publishing a release
+
+The `package.yml` workflow builds and smoke-tests the package whenever a
+version tag is pushed. To publish a new version:
+
+1. Update `version` in `pyproject.toml`.
+2. Commit and merge the change into `main`.
+3. Configure a PyPI Trusted Publisher for this repository, using the `pypi`
+   environment and `.github/workflows/package.yml` workflow.
+4. Create and push a matching tag:
+   ```sh
+   git tag v1.0.1
+   git push origin v1.0.1
+   ```
+5. Install the published release:
+   ```sh
+   python -m pip install --upgrade ct-cli-gui
+   ct-dlp --help
+   ```
+
+The workflow publishes through PyPI Trusted Publishing and does not store a
+PyPI API token in the repository.
