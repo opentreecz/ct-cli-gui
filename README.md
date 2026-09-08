@@ -153,7 +153,7 @@ Actions:
 python3 -m pip install -r requirements-dev.txt
 python3 -m ruff check .
 python3 -m compileall -q .
-python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=75 -q
+python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=80 -q
 ```
 
 The tests use mocked network and subprocess calls, so they do not contact
