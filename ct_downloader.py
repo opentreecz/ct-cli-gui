@@ -1,10 +1,20 @@
-import sys
+import argparse
 import os
 import re
-import urllib.request
 import subprocess
+import sys
+import urllib.request
 import uuid
-import argparse
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+REQUEST_TIMEOUT = 30
+SITE_URL = "https://www.ceskatelevize.cz"
+STREAM_API_URL = (
+    "https://api.ceskatelevize.cz/video/v1/playlist-vod/v1/stream-data/"
+    "media/external/{video_id}?canPlayDrm=true&quality=web&streamType=dash"
+    "&deviceId={device_id}&origin=ivysilani&client=iVysilaniWeb"
+    "&clientVersion=0.37.8"
+)
 
 def format_episode_name(raw_title):
     name = raw_title.split('|')[0].strip()
@@ -22,13 +32,13 @@ def format_episode_name(raw_title):
 
 def get_html(url):
     req = urllib.request.Request(url, headers={
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
+        "User-Agent": USER_AGENT
     })
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             return response.read().decode('utf-8')
-    except Exception as e:
-        print(f"[-] Error fetching page: {e}")
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"[-] Error fetching page: {error}")
         return ""
 
 def download_episode(episode_url, quality=None):
@@ -62,17 +72,20 @@ def download_episode(episode_url, quality=None):
         if not os.path.exists(poster_filename):
             try:
                 urllib.request.urlretrieve(poster_url, poster_filename)
-                print(f"[+] Saved episode poster artwork.")
-            except:
-                pass
+                print("[+] Saved episode poster artwork.")
+            except OSError:
+                print("[-] Could not download episode poster.")
 
     device_id = str(uuid.uuid4())
-    api_url = f"https://api.ceskatelevize.cz/video/v1/playlist-vod/v1/stream-data/media/external/{video_id}?canPlayDrm=true&quality=web&streamType=dash&deviceId={device_id}&origin=ivysilani&client=iVysilaniWeb&clientVersion=0.37.8"
+    api_url = STREAM_API_URL.format(video_id=video_id, device_id=device_id)
     
-    req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'})
+    req = urllib.request.Request(
+        api_url,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
     
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             data = response.read().decode('utf-8')
             
             # --- SUBTITLES ---
@@ -85,24 +98,29 @@ def download_episode(episode_url, quality=None):
                 sub_url = sub_match.group(1).replace('\\/', '/')
                 try:
                     urllib.request.urlretrieve(sub_url, vtt_filename)
-                    subprocess.run(["ffmpeg", "-i", vtt_filename, srt_filename, "-y"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(
+                        ["ffmpeg", "-i", vtt_filename, srt_filename, "-y"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
                     if os.path.exists(srt_filename):
                         os.remove(vtt_filename)
                         has_subs = True
                         print(f"[+] Generated standard subtitle file: {srt_filename}")
-                except:
-                    pass
+                except (OSError, subprocess.SubprocessError):
+                    print("[-] Could not download or convert subtitles.")
 
             stream_match = re.search(r'"(https://[^"]+(?:token=[^"]+|m3u8|mpd[^"]*))"', data)
             if not stream_match:
-                print(f"[-] Error: Stream URL not found. It may be DRM protected.")
+                print("[-] Error: Stream URL not found. It may be DRM protected.")
                 if has_subs: os.remove(srt_filename)
                 return
                 
             stream_url = stream_match.group(1).replace('\\/', '/')
             
             # --- YT-DLP DOWNLOAD ---
-            print(f"[+] Starting video download...")
+            print("[+] Starting video download...")
             command = ["yt-dlp", "-o", output_filename]
             
             # Add resolution limit if specified
@@ -110,11 +128,16 @@ def download_episode(episode_url, quality=None):
                 command.extend(["-S", f"res:{quality}"])
                 
             command.append(stream_url)
-            subprocess.run(command)
+            result = subprocess.run(command, check=False)
+            if result.returncode != 0:
+                print("[-] Video download failed.")
+                if has_subs and os.path.exists(srt_filename):
+                    os.remove(srt_filename)
+                return
             
             # --- SUBTITLE EMBEDDING ---
             if has_subs and os.path.exists(output_filename):
-                print(f"[+] Embedding subtitles directly into the MP4 file...")
+                print("[+] Embedding subtitles directly into the MP4 file...")
                 temp_video = f"{clean_title}.temp.mp4"
                 os.rename(output_filename, temp_video) 
                 
@@ -126,7 +149,12 @@ def download_episode(episode_url, quality=None):
                     output_filename, "-y"
                 ]
                 
-                result = subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                result = subprocess.run(
+                    ffmpeg_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
                 if result.returncode == 0 and os.path.exists(output_filename):
                     os.remove(temp_video)
                     print("[+] Subtitles successfully embedded! (External .srt file kept)")
@@ -134,8 +162,8 @@ def download_episode(episode_url, quality=None):
                     os.rename(temp_video, output_filename)
                     print("[-] Failed to embed subtitles. Kept original video.")
                 
-    except Exception as e:
-        print(f"[-] Connection error getting stream: {e}")
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"[-] Connection error getting stream: {error}")
 
 def main():
     parser = argparse.ArgumentParser(description="Česká televize Downloader")
@@ -172,7 +200,7 @@ def main():
         print(f"[+] Found {len(unique_ids)} episodes. Starting batch download...\n")
         
         for vid_id in unique_ids:
-            ep_url = f"https://www.ceskatelevize.cz{series_path}/{vid_id}/"
+            ep_url = f"{SITE_URL}{series_path}/{vid_id}/"
             download_episode(ep_url, quality)
             print("-" * 60)
             
