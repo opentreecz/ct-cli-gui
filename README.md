@@ -128,6 +128,25 @@ export CT_DOWNLOAD_DIR="$HOME/Videos/Ceska televize"
 python3 ct_gui.pyw
 ```
 
+## 📦 Install the CLI from PyPI
+
+The command-line downloader can be installed as a Python package:
+
+```sh
+python -m pip install ct-cli-gui
+ct-dlp "https://www.ceskatelevize.cz/porady/..."
+```
+
+This package installs the `ct-dlp` CLI and its `yt-dlp` dependency. It does
+not install the Tkinter GUI or FFmpeg; install Tkinter and FFmpeg through your
+operating system and use `ct_gui.pyw` from the repository for the desktop GUI.
+
+To publish a new package version, update the `version` field in `pyproject.toml`,
+create a matching tag such as `v1.0.1`, and push the tag. The package workflow
+builds the wheel and source distribution and publishes them to PyPI using
+trusted publishing. Configure a PyPI project named `ct-cli-gui` and a
+repository publishing environment named `pypi` before the first release.
+
 ## 💻 Usage
 
 ### Option 1: The Desktop GUI
@@ -143,6 +162,17 @@ ct-dlp.bat "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/21556226
 
 # Linux/macOS
 ct-dlp "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/"
+```
+
+**Download a series:**
+
+```text
+# Windows
+ct-dlp.bat "https://www.ceskatelevize.cz/porady/..."
+
+# Linux/macOS
+./ct-dlp "https://www.ceskatelevize.cz/porady/..."
+```
 
 ## ✅ Development checks
 
@@ -159,3 +189,26 @@ python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --c
 The tests use mocked network and subprocess calls, so they do not contact
 Česká televize or download media files. The GitHub Actions workflow runs these
 checks on Windows, Linux, and macOS.
+
+## 📤 Publishing a release
+
+The `package.yml` workflow builds and smoke-tests the package whenever a
+version tag is pushed. To publish a new version:
+
+1. Update `version` in `pyproject.toml`.
+2. Commit and merge the change into `main`.
+3. Configure a PyPI Trusted Publisher for this repository, using the `pypi`
+   environment and `.github/workflows/package.yml` workflow.
+4. Create and push a matching tag:
+   ```sh
+   git tag v1.0.1
+   git push origin v1.0.1
+   ```
+5. Install the published release:
+   ```sh
+   python -m pip install --upgrade ct-cli-gui
+   ct-dlp --help
+   ```
+
+The workflow publishes through PyPI Trusted Publishing and does not store a
+PyPI API token in the repository.

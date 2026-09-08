@@ -270,6 +270,31 @@ def test_main_rejects_invalid_url(monkeypatch, capsys):
     assert "Invalid Česká televize URL format" in capsys.readouterr().out
 
 
+def test_main_normalizes_quality_argument(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality: called.append((url, quality)),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "--quality",
+            "720p",
+        ],
+    )
+
+    ct_downloader.main()
+
+    assert called == [
+        ("https://www.ceskatelevize.cz/porady/123-show/12345678901/", "720")
+    ]
+
+
 def test_download_episode_handles_poster_failure(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
