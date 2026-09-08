@@ -143,3 +143,19 @@ ct-dlp.bat "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/21556226
 
 # Linux/macOS
 ct-dlp "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/"
+
+## ✅ Development checks
+
+Install the development dependencies and run the same checks used by GitHub
+Actions:
+
+```sh
+python3 -m pip install -r requirements-dev.txt
+python3 -m ruff check .
+python3 -m compileall -q .
+python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=50 -q
+```
+
+The tests use mocked network and subprocess calls, so they do not contact
+Česká televize or download media files. The GitHub Actions workflow runs these
+checks on Windows, Linux, and macOS.

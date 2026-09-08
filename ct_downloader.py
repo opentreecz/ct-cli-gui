@@ -53,7 +53,11 @@ def download_episode(episode_url, quality=None):
     html = get_html(episode_url)
     title_match = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
     
-    clean_title = format_episode_name(title_match.group(1)) if title_match else f"CeskaTelevize_{video_id}"
+    clean_title = (
+        format_episode_name(title_match.group(1))
+        if title_match
+        else f"CeskaTelevize_{video_id}"
+    )
     output_filename = f"{clean_title}.mp4"
     
     if os.path.exists(output_filename):
@@ -114,7 +118,8 @@ def download_episode(episode_url, quality=None):
             stream_match = re.search(r'"(https://[^"]+(?:token=[^"]+|m3u8|mpd[^"]*))"', data)
             if not stream_match:
                 print("[-] Error: Stream URL not found. It may be DRM protected.")
-                if has_subs: os.remove(srt_filename)
+                if has_subs:
+                    os.remove(srt_filename)
                 return
                 
             stream_url = stream_match.group(1).replace('\\/', '/')
@@ -168,7 +173,12 @@ def download_episode(episode_url, quality=None):
 def main():
     parser = argparse.ArgumentParser(description="Česká televize Downloader")
     parser.add_argument("url", nargs="?", help="The iVysílání Episode or Series URL")
-    parser.add_argument("-q", "--quality", type=str, help="Max resolution limit (e.g. 1080, 720, 540)")
+    parser.add_argument(
+        "-q",
+        "--quality",
+        type=str,
+        help="Max resolution limit (e.g. 1080, 720, 540)",
+    )
     args = parser.parse_args()
 
     if args.url:
