@@ -1,8 +1,10 @@
+import importlib.machinery
 import importlib.util
 from pathlib import Path
 
 GUI_PATH = Path(__file__).parents[1] / "ct_gui.pyw"
-spec = importlib.util.spec_from_file_location("ct_gui", GUI_PATH)
+loader = importlib.machinery.SourceFileLoader("ct_gui", str(GUI_PATH))
+spec = importlib.util.spec_from_loader(loader.name, loader)
 ct_gui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ct_gui)
 
