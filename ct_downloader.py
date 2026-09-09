@@ -69,17 +69,7 @@ def _extract_transcript(page_html):
     return None
 
 
-def _srt_to_text(srt_content):
-    lines = []
-    for line in srt_content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.isdigit() or "-->" in stripped:
-            continue
-        lines.append(re.sub(r"<[^>]+>", "", stripped))
-    return "\n".join(lines)
-
-
-def _download_subtitles(data, clean_title, subtitle_format="srt"):
+def _download_subtitles(data, clean_title):
     sub_match = re.search(r'"(https://[^"]+\.vtt[^"]*)"', data)
     if not sub_match:
         return None
@@ -97,15 +87,6 @@ def _download_subtitles(data, clean_title, subtitle_format="srt"):
         )
         if os.path.exists(srt_filename):
             os.remove(vtt_filename)
-            if subtitle_format == "txt":
-                txt_filename = f"{clean_title}.cs.txt"
-                with open(srt_filename, encoding="utf-8") as subtitle_file:
-                    subtitle_text = _srt_to_text(subtitle_file.read())
-                with open(txt_filename, "w", encoding="utf-8") as subtitle_file:
-                    subtitle_file.write(subtitle_text + "\n")
-                os.remove(srt_filename)
-                print(f"[+] Generated plain-text subtitle file: {txt_filename}")
-                return txt_filename
             print(f"[+] Generated standard subtitle file: {srt_filename}")
             return srt_filename
     except (OSError, subprocess.SubprocessError):
@@ -113,7 +94,7 @@ def _download_subtitles(data, clean_title, subtitle_format="srt"):
     return None
 
 
-def download_episode(episode_url, quality=None, download_mode="video", subtitle_format="srt"):
+def download_episode(episode_url, quality=None, download_mode="video"):
     print(f"\nAnalyzing: {episode_url}")
 
     id_match = re.search(r"/(\d{10,})/?$", episode_url)
@@ -174,9 +155,8 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             data = response.read().decode("utf-8")
 
-            output_subtitle_format = subtitle_format if download_mode == "subtitles" else "srt"
-            subtitle_filename = _download_subtitles(data, clean_title, output_subtitle_format)
-            has_subs = subtitle_filename is not None
+            srt_filename = _download_subtitles(data, clean_title)
+            has_subs = srt_filename is not None
             if download_mode == "subtitles":
                 if not has_subs:
                     print("[-] Subtitles not found for this episode.")
@@ -218,7 +198,7 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
                     "-i",
                     temp_video,
                     "-i",
-                    subtitle_filename,
+                    srt_filename,
                     "-c",
                     "copy",
                     "-c:s",
@@ -277,12 +257,6 @@ def main():
         dest="mode",
         help="Download transcript only",
     )
-    parser.add_argument(
-        "--subtitle-format",
-        choices=("srt", "txt"),
-        default="srt",
-        help="Format for subtitle-only downloads (default: srt)",
-    )
     args = parser.parse_args()
 
     if args.url:
@@ -301,7 +275,7 @@ def main():
         if args.mode == "video":
             download_episode(url, quality)
         else:
-            download_episode(url, quality, args.mode, args.subtitle_format)
+            download_episode(url, quality, args.mode)
 
     elif series_match:
         print("[+] Series URL detected. Searching for episodes...")
@@ -321,7 +295,7 @@ def main():
             if args.mode == "video":
                 download_episode(ep_url, quality)
             else:
-                download_episode(ep_url, quality, args.mode, args.subtitle_format)
+                download_episode(ep_url, quality, args.mode)
             print("-" * 60)
 
         print("\n[+] Batch download complete!")

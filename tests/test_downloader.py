@@ -15,31 +15,6 @@ def test_extract_transcript_from_meta_and_returns_none():
     assert ct_downloader._extract_transcript("<html>no transcript</html>") is None
 
 
-def test_download_subtitles_can_save_plain_text(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        ct_downloader.urllib.request,
-        "urlretrieve",
-        lambda url, filename: (tmp_path / filename).write_text("vtt"),
-    )
-
-    def run(command, **kwargs):
-        (tmp_path / "Episode.cs.srt").write_text(
-            "1\n00:00:01,000 --> 00:00:02,000\nHello <i>world</i>\n"
-        )
-        return type("Result", (), {"returncode": 0})()
-
-    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
-
-    result = ct_downloader._download_subtitles(
-        '{"subtitle":"https://media.example/subtitle.vtt"}', "Episode", "txt"
-    )
-
-    assert result == "Episode.cs.txt"
-    assert (tmp_path / result).read_text(encoding="utf-8") == "Hello world\n"
-    assert not (tmp_path / "Episode.cs.srt").exists()
-
-
 def test_download_subtitles_returns_none_without_url():
     assert (
         ct_downloader._download_subtitles('{"stream":"https://media.example/video.mpd"}', "Episode")
@@ -412,9 +387,7 @@ def test_main_passes_subtitle_mode_to_episode(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(
-            (url, quality, mode, subtitle_format)
-        ),
+        lambda url, quality, mode: called.append((url, quality, mode)),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -429,12 +402,7 @@ def test_main_passes_subtitle_mode_to_episode(monkeypatch):
     ct_downloader.main()
 
     assert called == [
-        (
-            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
-            None,
-            "subtitles",
-            "srt",
-        )
+        ("https://www.ceskatelevize.cz/porady/123-show/12345678901/", None, "subtitles")
     ]
 
 

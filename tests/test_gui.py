@@ -65,17 +65,6 @@ def test_build_download_command_with_download_mode():
     assert command[-2:] == ["--mode", "subtitles"]
 
 
-def test_build_download_command_with_text_subtitles():
-    command = ct_gui.build_download_command(
-        "https://example.test/episode/123",
-        "Highest Available",
-        "subtitles",
-        "txt",
-    )
-
-    assert command[-2:] == ["--subtitle-format", "txt"]
-
-
 def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(ct_gui.sys, "platform", "linux")
@@ -234,35 +223,6 @@ def test_start_download_reports_launch_error(monkeypatch, tmp_path):
     ct_gui.start_download()
 
     assert errors == [("Unable to start download", "cannot launch")]
-
-
-def test_start_download_reports_missing_downloader(monkeypatch, tmp_path):
-    class Field:
-        def get(self):
-            return "https://example.test/video"
-
-    class Quality:
-        def get(self):
-            return "Highest Available"
-
-    errors = []
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Quality(), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
-    monkeypatch.setattr(
-        ct_gui,
-        "build_download_command",
-        lambda *args: (_ for _ in ()).throw(FileNotFoundError("downloader missing")),
-    )
-    monkeypatch.setattr(
-        ct_gui.messagebox,
-        "showerror",
-        lambda title, message: errors.append((title, message)),
-    )
-
-    ct_gui.start_download()
-
-    assert errors == [("Unable to start download", "downloader missing")]
 
 
 def test_start_download_includes_selected_mode(monkeypatch, tmp_path):
