@@ -9,12 +9,44 @@ ct_gui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ct_gui)
 
 
-def test_build_download_command_without_quality():
+def test_build_download_command_without_quality(monkeypatch):
+    monkeypatch.setattr(
+        ct_gui,
+        "get_downloader_command",
+        lambda: [str(ct_gui.get_console_python()), str(GUI_PATH.parents[0] / "ct_downloader.py")],
+    )
     command = ct_gui.build_download_command("https://example.test/episode/123", "Highest Available")
 
     assert command[1] == str(GUI_PATH.parents[0] / "ct_downloader.py")
     assert command[-1] == "https://example.test/episode/123"
     assert "--quality" not in command
+
+
+def test_get_downloader_command_uses_configured_path(monkeypatch, tmp_path):
+    downloader = tmp_path / "ct_downloader.py"
+    downloader.write_text("")
+    monkeypatch.setenv("CT_DOWNLOADER_PATH", str(downloader))
+    monkeypatch.setattr(ct_gui, "get_console_python", lambda: Path("python"))
+
+    assert ct_gui.get_downloader_command() == ["python", str(downloader)]
+
+
+def test_get_downloader_command_uses_installed_cli(monkeypatch):
+    monkeypatch.delenv("CT_DOWNLOADER_PATH", raising=False)
+    monkeypatch.setattr(ct_gui.shutil, "which", lambda name: "/bin/ct-dlp")
+
+    assert ct_gui.get_downloader_command() == ["/bin/ct-dlp"]
+
+
+def test_get_downloader_command_reports_missing_configured_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("CT_DOWNLOADER_PATH", str(tmp_path / "missing.py"))
+
+    try:
+        ct_gui.get_downloader_command()
+    except FileNotFoundError as error:
+        assert "Configured downloader was not found" in str(error)
+    else:
+        raise AssertionError("Expected missing configured downloader to fail")
 
 
 def test_build_download_command_with_quality():

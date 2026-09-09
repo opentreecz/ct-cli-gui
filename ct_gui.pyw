@@ -23,6 +23,30 @@ def get_console_python():
     return executable
 
 
+def get_downloader_command():
+    configured_path = os.environ.get("CT_DOWNLOADER_PATH")
+    if configured_path:
+        configured = Path(configured_path).expanduser()
+        if not configured.is_file():
+            raise FileNotFoundError(f"Configured downloader was not found: {configured}")
+        return [str(get_console_python()), str(configured)]
+
+    installed_command = shutil.which("ct-dlp")
+    if installed_command:
+        return [installed_command]
+
+    installed_script = shutil.which("ct_downloader.py")
+    if installed_script:
+        return [str(get_console_python()), installed_script]
+
+    if DOWNLOADER_SCRIPT.is_file():
+        return [str(get_console_python()), str(DOWNLOADER_SCRIPT)]
+
+    raise FileNotFoundError(
+        "ct_downloader.py was not found. Set CT_DOWNLOADER_PATH or install ct-cli-gui."
+    )
+
+
 def launch_download(command):
     options = {"cwd": DOWNLOAD_DIR}
     if sys.platform == "win32":
@@ -55,7 +79,7 @@ def launch_download(command):
 
 
 def build_download_command(url, selected_quality, download_mode="video"):
-    command = [str(get_console_python()), str(DOWNLOADER_SCRIPT), url]
+    command = get_downloader_command() + [url]
     if download_mode != "video":
         command.extend(["--mode", download_mode])
     if selected_quality != "Highest Available":
@@ -67,11 +91,10 @@ def start_download():
     url = url_entry.get().strip()
     selected_quality = quality_var.get()
     selected_mode = mode_var.get() if "mode_var" in globals() else "video"
-    
+
     if url:
-        command = build_download_command(url, selected_quality, selected_mode)
-        
         try:
+            command = build_download_command(url, selected_quality, selected_mode)
             DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
             launch_download(command)
         except OSError as error:
@@ -80,12 +103,13 @@ def start_download():
 
         url_entry.delete(0, tk.END)
 
+
 def main():
     global quality_var, url_entry, mode_var
 
     root = tk.Tk()
     root.title("ČT Downloader")
-    root.geometry("550x170")
+    root.geometry("550x220")
     root.resizable(False, False)
 
     tk.Label(
