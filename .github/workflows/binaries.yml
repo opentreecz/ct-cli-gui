@@ -118,6 +118,8 @@ jobs:
       - name: Smoke-test CLI binary (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: pwsh
+        env:
+          PYTHONUTF8: "1"
         run: |
           .\dist\ct-dlp.exe --version
           .\dist\ct-dlp.exe --help
