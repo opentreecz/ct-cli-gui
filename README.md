@@ -41,6 +41,19 @@ ct-dlp.bat    # Windows
 ct-dlp        # Linux/macOS
 ```
 
+The GUI normally uses a `ct-dlp` command installed on `PATH`, or the
+`ct_downloader.py` file next to `ct_gui.pyw`. If the GUI and downloader are
+stored in different directories, install the package/CLI or configure the
+script path explicitly before starting the GUI:
+
+```powershell
+$env:CT_DOWNLOADER_PATH = "C:\Path\to\ct_downloader.py"
+py .\ct_gui.pyw
+```
+
+On Windows, the Python Scripts directory containing `ct-dlp.exe` or
+`ct_downloader.py` must also be included in `PATH`.
+
 ### Windows
 
 1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/windows/).
