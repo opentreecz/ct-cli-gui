@@ -27,8 +27,11 @@ jobs:
       - name: Lint Python
         run: python -m ruff check .
 
+      - name: Check Python formatting
+        run: python -m ruff format --check .
+
       - name: Compile Python
         run: python -m compileall -q .
 
       - name: Run smoke tests
-        run: python -m pytest --cov=ct_downloader --cov=ct_gui --cov-report=term-missing --cov-fail-under=85 -q
+        run: python -m pytest --cov=ct_downloader --cov=ct_gui --cov-branch --cov-report=term-missing --cov-fail-under=85 -q
