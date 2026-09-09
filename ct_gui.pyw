@@ -91,14 +91,10 @@ def start_download():
     url = url_entry.get().strip()
     selected_quality = quality_var.get()
     selected_mode = mode_var.get() if "mode_var" in globals() else "video"
-    
+
     if url:
-        command = build_download_command(url, selected_quality, selected_mode)
-        
         try:
-            command = build_download_command(
-                url, selected_quality, selected_mode, selected_subtitle_format
-            )
+            command = build_download_command(url, selected_quality, selected_mode)
             DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
             launch_download(command)
         except OSError as error:

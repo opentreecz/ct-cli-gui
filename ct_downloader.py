@@ -166,7 +166,7 @@ def download_episode(episode_url, quality=None, download_mode="video"):
             if not stream_match:
                 print("[-] Error: Stream URL not found. It may be DRM protected.")
                 if has_subs:
-                    os.remove(subtitle_filename)
+                    os.remove(srt_filename)
                 return
 
             stream_url = stream_match.group(1).replace("\\/", "/")
@@ -183,12 +183,12 @@ def download_episode(episode_url, quality=None, download_mode="video"):
             result = subprocess.run(command, check=False)
             if result.returncode != 0:
                 print("[-] Video download failed.")
-                if has_subs and os.path.exists(subtitle_filename):
-                    os.remove(subtitle_filename)
+                if has_subs and os.path.exists(srt_filename):
+                    os.remove(srt_filename)
                 return
 
             # --- SUBTITLE EMBEDDING ---
-            if has_subs and output_subtitle_format == "srt" and os.path.exists(output_filename):
+            if has_subs and os.path.exists(output_filename):
                 print("[+] Embedding subtitles directly into the MP4 file...")
                 temp_video = f"{clean_title}.temp.mp4"
                 os.rename(output_filename, temp_video)
