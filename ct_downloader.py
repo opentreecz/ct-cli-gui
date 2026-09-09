@@ -1,10 +1,13 @@
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
 import uuid
+
+__version__ = "1.2.0"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
 REQUEST_TIMEOUT = 30
@@ -15,6 +18,25 @@ STREAM_API_URL = (
     "&deviceId={device_id}&origin=ivysilani&client=iVysilaniWeb"
     "&clientVersion=0.37.8"
 )
+
+
+def _resolve_tool(name):
+    """Return the path to an external tool (ffmpeg, yt-dlp).
+
+    When running inside a PyInstaller bundle the tool is expected next to the
+    unpacked payload.  Otherwise the bare *name* is returned so that the OS
+    searches PATH as usual.
+    """
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        ext = ".exe" if sys.platform == "win32" else ""
+        candidate = os.path.join(bundle_dir, name + ext)
+        if os.path.isfile(candidate):
+            return candidate
+    found = shutil.which(name)
+    if found:
+        return found
+    return name
 
 
 def format_episode_name(raw_title):
@@ -64,7 +86,7 @@ def _download_subtitles(data, clean_title, subtitle_format="srt"):
     try:
         urllib.request.urlretrieve(sub_url, vtt_filename)
         subprocess.run(
-            ["ffmpeg", "-i", vtt_filename, srt_filename, "-y"],
+            [_resolve_tool("ffmpeg"), "-i", vtt_filename, srt_filename, "-y"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -161,7 +183,7 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
 
             # --- YT-DLP DOWNLOAD ---
             print("[+] Starting video download...")
-            command = ["yt-dlp", "-o", output_filename]
+            command = [_resolve_tool("yt-dlp"), "-o", output_filename]
 
             # Add resolution limit if specified
             if quality:
@@ -182,7 +204,7 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
                 os.rename(output_filename, temp_video)
 
                 ffmpeg_cmd = [
-                    "ffmpeg",
+                    _resolve_tool("ffmpeg"),
                     "-i",
                     temp_video,
                     "-i",
@@ -241,6 +263,9 @@ def _normalize_subtitle_format(value):
 def build_arg_parser():
     """Build the CLI argument parser for ct_downloader."""
     parser = argparse.ArgumentParser(description="Česká televize Downloader")
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
     parser.add_argument("url", nargs="?", help="The iVysílání Episode or Series URL")
     parser.add_argument(
         "-q",

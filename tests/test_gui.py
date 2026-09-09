@@ -402,3 +402,40 @@ def test_start_download_includes_srt_txt_subtitle_format(monkeypatch, tmp_path):
     ct_gui.start_download()
 
     assert launched[0][-2:] == ["--subtitle-format", "both"]
+
+
+# ---------------------------------------------------------------------------
+# Frozen-mode tests (sys.frozen)
+# ---------------------------------------------------------------------------
+
+
+def test_get_downloader_command_returns_none_when_frozen(monkeypatch):
+    """When running as a frozen binary, get_downloader_command returns None."""
+    monkeypatch.setattr(ct_gui.sys, "frozen", True, raising=False)
+
+    assert ct_gui.get_downloader_command() is None
+
+
+def test_build_download_command_returns_none_when_frozen(monkeypatch):
+    """Frozen mode: build_download_command returns None (handled in-process)."""
+    monkeypatch.setattr(ct_gui.sys, "frozen", True, raising=False)
+
+    result = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "subtitles",
+        "txt",
+    )
+    assert result is None
+
+
+def test_get_downloader_command_uses_script_when_not_frozen(monkeypatch):
+    """Source-mode: get_downloader_command still finds ct_downloader.py."""
+    monkeypatch.delattr(ct_gui.sys, "frozen", raising=False)
+    monkeypatch.delenv("CT_DOWNLOADER_PATH", raising=False)
+    monkeypatch.setattr(ct_gui.shutil, "which", lambda name: None)
+    monkeypatch.setattr(ct_gui, "DOWNLOADER_SCRIPT", GUI_PATH.parents[0] / "ct_downloader.py")
+
+    command = ct_gui.get_downloader_command()
+    assert command is not None
+    assert "ct_downloader.py" in command[-1]
