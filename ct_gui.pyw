@@ -54,10 +54,12 @@ def launch_download(command):
     subprocess.Popen(command, **options)
 
 
-def build_download_command(url, selected_quality, download_mode="video"):
+def build_download_command(url, selected_quality, download_mode="video", subtitle_format="srt"):
     command = [str(get_console_python()), str(DOWNLOADER_SCRIPT), url]
     if download_mode != "video":
         command.extend(["--mode", download_mode])
+    if download_mode == "subtitles" and subtitle_format != "srt":
+        command.extend(["--subtitle-format", subtitle_format])
     if selected_quality != "Highest Available":
         command.extend(["--quality", selected_quality.replace("p", "")])
     return command
@@ -67,9 +69,14 @@ def start_download():
     url = url_entry.get().strip()
     selected_quality = quality_var.get()
     selected_mode = mode_var.get() if "mode_var" in globals() else "video"
+    selected_subtitle_format = (
+        subtitle_format_var.get() if "subtitle_format_var" in globals() else "srt"
+    )
     
     if url:
-        command = build_download_command(url, selected_quality, selected_mode)
+        command = build_download_command(
+            url, selected_quality, selected_mode, selected_subtitle_format
+        )
         
         try:
             DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,11 +88,11 @@ def start_download():
         url_entry.delete(0, tk.END)
 
 def main():
-    global quality_var, url_entry, mode_var
+    global quality_var, url_entry, mode_var, subtitle_format_var
 
     root = tk.Tk()
     root.title("ČT Downloader")
-    root.geometry("550x170")
+    root.geometry("550x220")
     root.resizable(False, False)
 
     tk.Label(
@@ -115,6 +122,17 @@ def main():
     )
     mode_dropdown["values"] = ("video", "subtitles", "transcript")
     mode_dropdown.pack(pady=(0, 10))
+
+    subtitle_format_var = tk.StringVar(value="srt")
+    subtitle_format_dropdown = ttk.Combobox(
+        root,
+        textvariable=subtitle_format_var,
+        state="readonly",
+        font=("Segoe UI", 9),
+        width=18,
+    )
+    subtitle_format_dropdown["values"] = ("srt", "txt")
+    subtitle_format_dropdown.pack(pady=(0, 10))
 
     tk.Button(
         root,

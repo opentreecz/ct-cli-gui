@@ -33,6 +33,17 @@ def test_build_download_command_with_download_mode():
     assert command[-2:] == ["--mode", "subtitles"]
 
 
+def test_build_download_command_with_text_subtitles():
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "subtitles",
+        "txt",
+    )
+
+    assert command[-2:] == ["--subtitle-format", "txt"]
+
+
 def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(ct_gui.sys, "platform", "linux")
