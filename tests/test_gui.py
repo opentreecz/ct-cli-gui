@@ -1,3 +1,4 @@
+import argparse
 import importlib.machinery
 import importlib.util
 from pathlib import Path
@@ -289,3 +290,93 @@ def test_start_download_includes_selected_subtitle_format(monkeypatch, tmp_path)
     ct_gui.start_download()
 
     assert launched[0][-2:] == ["--subtitle-format", "txt"]
+
+
+# ---------------------------------------------------------------------------
+# GUI ↔ CLI contract tests
+# These tests feed the command built by the GUI into the downloader's own
+# argparser, proving both sides agree on the CLI interface.  A failure here
+# means one side was changed without updating the other — exactly the class
+# of regression introduced in commit 68af0e4 / fixed in 0da6f63.
+# ---------------------------------------------------------------------------
+
+
+
+
+def _make_downloader_parser():
+    """Return an argparse.ArgumentParser identical to the one in ct_downloader.main()."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("url", nargs="?")
+    parser.add_argument("-q", "--quality", type=str)
+    parser.add_argument(
+        "--mode",
+        choices=("video", "subtitles", "transcript"),
+        default="video",
+    )
+    parser.add_argument("--subtitles-only", action="store_const", const="subtitles", dest="mode")
+    parser.add_argument("--transcript-only", action="store_const", const="transcript", dest="mode")
+    parser.add_argument("--subtitle-format", choices=("srt", "txt"), default="srt")
+    return parser
+
+
+def _gui_args(url, quality, mode, subtitle_format):
+    """Build the command the GUI would launch and strip the interpreter/script prefix."""
+    command = ct_gui.build_download_command(url, quality, mode, subtitle_format)
+    # The first two entries are [python, ct_downloader.py]; drop them so we can
+    # feed the remaining tokens directly to argparse.
+    return command[2:]
+
+
+def test_gui_srt_command_is_accepted_by_downloader_cli():
+    """GUI command for srt subtitles must parse without error."""
+    args = _gui_args(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "Highest Available",
+        "subtitles",
+        "srt",
+    )
+    parsed = _make_downloader_parser().parse_args(args)
+    assert parsed.mode == "subtitles"
+    assert parsed.subtitle_format == "srt"
+
+
+def test_gui_txt_command_is_accepted_by_downloader_cli():
+    """GUI command for txt subtitles must parse without error.
+
+    This is the primary regression guard: before ct_downloader received the
+    --subtitle-format argument, this call raised SystemExit(2).
+    """
+    args = _gui_args(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "Highest Available",
+        "subtitles",
+        "txt",
+    )
+    parsed = _make_downloader_parser().parse_args(args)
+    assert parsed.mode == "subtitles"
+    assert parsed.subtitle_format == "txt"
+
+
+def test_gui_video_command_is_accepted_by_downloader_cli():
+    """Default video download command from the GUI must also parse cleanly."""
+    args = _gui_args(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "720p",
+        "video",
+        "srt",
+    )
+    parsed = _make_downloader_parser().parse_args(args)
+    assert parsed.mode == "video"
+    assert parsed.quality == "720"
+
+
+def test_gui_transcript_command_is_accepted_by_downloader_cli():
+    """Transcript mode from the GUI must parse cleanly."""
+    args = _gui_args(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "Highest Available",
+        "transcript",
+        "srt",
+    )
+    parsed = _make_downloader_parser().parse_args(args)
+    assert parsed.mode == "transcript"
