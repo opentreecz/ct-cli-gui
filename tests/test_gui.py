@@ -1,4 +1,3 @@
-import argparse
 import importlib.machinery
 import importlib.util
 from pathlib import Path
@@ -255,13 +254,13 @@ def test_start_download_includes_selected_mode(monkeypatch, tmp_path):
     launched = []
     monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
     monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
-    monkeypatch.setattr(ct_gui, "mode_var", Value("transcript"), raising=False)
+    monkeypatch.setattr(ct_gui, "mode_var", Value("subtitles"), raising=False)
     monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
     monkeypatch.setattr(ct_gui, "launch_download", launched.append)
 
     ct_gui.start_download()
 
-    assert launched[0][-2:] == ["--mode", "transcript"]
+    assert launched[0][-2:] == ["--mode", "subtitles"]
 
 
 def test_start_download_includes_selected_subtitle_format(monkeypatch, tmp_path):
@@ -294,29 +293,14 @@ def test_start_download_includes_selected_subtitle_format(monkeypatch, tmp_path)
 
 # ---------------------------------------------------------------------------
 # GUI ↔ CLI contract tests
-# These tests feed the command built by the GUI into the downloader's own
-# argparser, proving both sides agree on the CLI interface.  A failure here
-# means one side was changed without updating the other — exactly the class
-# of regression introduced in commit 68af0e4 / fixed in 0da6f63.
+# These tests feed the command built by the GUI into the downloader's REAL
+# argparser (ct_downloader.build_arg_parser), proving both sides agree on
+# the CLI interface.  A failure here means one side was changed without
+# updating the other — exactly the class of regression introduced in
+# commit 68af0e4 / fixed in 0da6f63.
 # ---------------------------------------------------------------------------
 
-
-
-
-def _make_downloader_parser():
-    """Return an argparse.ArgumentParser identical to the one in ct_downloader.main()."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("url", nargs="?")
-    parser.add_argument("-q", "--quality", type=str)
-    parser.add_argument(
-        "--mode",
-        choices=("video", "subtitles", "transcript"),
-        default="video",
-    )
-    parser.add_argument("--subtitles-only", action="store_const", const="subtitles", dest="mode")
-    parser.add_argument("--transcript-only", action="store_const", const="transcript", dest="mode")
-    parser.add_argument("--subtitle-format", choices=("srt", "txt"), default="srt")
-    return parser
+import ct_downloader  # noqa: E402
 
 
 def _gui_args(url, quality, mode, subtitle_format):
@@ -335,26 +319,35 @@ def test_gui_srt_command_is_accepted_by_downloader_cli():
         "subtitles",
         "srt",
     )
-    parsed = _make_downloader_parser().parse_args(args)
+    parsed = ct_downloader.build_arg_parser().parse_args(args)
     assert parsed.mode == "subtitles"
     assert parsed.subtitle_format == "srt"
 
 
 def test_gui_txt_command_is_accepted_by_downloader_cli():
-    """GUI command for txt subtitles must parse without error.
-
-    This is the primary regression guard: before ct_downloader received the
-    --subtitle-format argument, this call raised SystemExit(2).
-    """
+    """GUI command for txt subtitles must parse without error."""
     args = _gui_args(
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "Highest Available",
         "subtitles",
         "txt",
     )
-    parsed = _make_downloader_parser().parse_args(args)
+    parsed = ct_downloader.build_arg_parser().parse_args(args)
     assert parsed.mode == "subtitles"
     assert parsed.subtitle_format == "txt"
+
+
+def test_gui_srt_txt_command_is_accepted_by_downloader_cli():
+    """GUI 'srt,txt' selection must emit --subtitle-format both and parse."""
+    args = _gui_args(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "Highest Available",
+        "subtitles",
+        "srt,txt",
+    )
+    parsed = ct_downloader.build_arg_parser().parse_args(args)
+    assert parsed.mode == "subtitles"
+    assert parsed.subtitle_format == "both"
 
 
 def test_gui_video_command_is_accepted_by_downloader_cli():
@@ -365,18 +358,47 @@ def test_gui_video_command_is_accepted_by_downloader_cli():
         "video",
         "srt",
     )
-    parsed = _make_downloader_parser().parse_args(args)
+    parsed = ct_downloader.build_arg_parser().parse_args(args)
     assert parsed.mode == "video"
     assert parsed.quality == "720"
 
 
-def test_gui_transcript_command_is_accepted_by_downloader_cli():
-    """Transcript mode from the GUI must parse cleanly."""
-    args = _gui_args(
-        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+def test_build_download_command_srt_txt_maps_to_both():
+    """GUI dropdown 'srt,txt' must map to CLI --subtitle-format both."""
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
         "Highest Available",
-        "transcript",
-        "srt",
+        "subtitles",
+        "srt,txt",
     )
-    parsed = _make_downloader_parser().parse_args(args)
-    assert parsed.mode == "transcript"
+    assert "--subtitle-format" in command
+    idx = command.index("--subtitle-format")
+    assert command[idx + 1] == "both"
+
+
+def test_start_download_includes_srt_txt_subtitle_format(monkeypatch, tmp_path):
+    class Field:
+        def get(self):
+            return "https://example.test/video"
+
+        def delete(self, start, end):
+            pass
+
+    class Value:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+    launched = []
+    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
+    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
+    monkeypatch.setattr(ct_gui, "mode_var", Value("subtitles"), raising=False)
+    monkeypatch.setattr(ct_gui, "subtitle_format_var", Value("srt,txt"), raising=False)
+    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setattr(ct_gui, "launch_download", launched.append)
+
+    ct_gui.start_download()
+
+    assert launched[0][-2:] == ["--subtitle-format", "both"]

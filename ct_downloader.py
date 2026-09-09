@@ -1,7 +1,4 @@
 import argparse
-import contextlib
-import html
-import json
 import os
 import re
 import subprocess
@@ -45,30 +42,6 @@ def get_html(url):
         return ""
 
 
-def _extract_transcript(page_html):
-    """Return a transcript from common iVysílání HTML/JSON representations."""
-    for pattern in (
-        r'"(?:transcript|transcriptText)"\s*:\s*"((?:\\.|[^"\\])*)"',
-        r'<meta[^>]+(?:name|property)="transcript"[^>]+content="([^"]+)"',
-    ):
-        match = re.search(pattern, page_html, re.IGNORECASE)
-        if match:
-            value = match.group(1)
-            if pattern.startswith('"'):
-                with contextlib.suppress(json.JSONDecodeError):
-                    value = json.loads(f'"{value}"')
-            return html.unescape(value).strip()
-
-    match = re.search(
-        r'<(?:section|div)[^>]+(?:id|class)="[^"]*transcript[^"]*"[^>]*>(.*?)</(?:section|div)>',
-        page_html,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if match:
-        return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", match.group(1)))).strip()
-    return None
-
-
 def _srt_to_text(srt_content):
     """Strip SRT index numbers, timestamps and inline tags, returning plain text."""
     lines = []
@@ -99,13 +72,16 @@ def _download_subtitles(data, clean_title, subtitle_format="srt"):
         if os.path.exists(srt_filename):
             os.remove(vtt_filename)
             print(f"[+] Generated standard subtitle file: {srt_filename}")
-            if subtitle_format == "txt":
+            if subtitle_format in ("txt", "both"):
                 txt_filename = f"{clean_title}.cs.txt"
                 with open(srt_filename, encoding="utf-8") as subtitle_file:
                     subtitle_text = _srt_to_text(subtitle_file.read())
                 with open(txt_filename, "w", encoding="utf-8") as subtitle_file:
                     subtitle_file.write(subtitle_text + "\n")
                 print(f"[+] Also saved as plain-text subtitle file: {txt_filename}")
+                if subtitle_format == "txt":
+                    os.remove(srt_filename)
+                    return txt_filename
             return srt_filename
     except (OSError, subprocess.SubprocessError):
         print("[-] Could not download or convert subtitles.")
@@ -127,16 +103,6 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
     clean_title = (
         format_episode_name(title_match.group(1)) if title_match else f"CeskaTelevize_{video_id}"
     )
-    if download_mode == "transcript":
-        transcript = _extract_transcript(html)
-        if not transcript:
-            print("[-] Transcript not found for this episode.")
-            return
-        transcript_filename = f"{clean_title}.txt"
-        with open(transcript_filename, "w", encoding="utf-8") as transcript_file:
-            transcript_file.write(transcript + "\n")
-        print(f"[+] Saved transcript: {transcript_filename}")
-        return
 
     output_filename = f"{clean_title}.mp4"
 
@@ -250,7 +216,30 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
         print(f"[-] Connection error getting stream: {error}")
 
 
-def main():
+_SUBTITLE_FORMAT_SYNONYMS = {
+    "srt": "srt",
+    "txt": "txt",
+    "both": "both",
+    "srt,txt": "both",
+    "txt,srt": "both",
+    "srt+txt": "both",
+    "srt + txt": "both",
+}
+
+
+def _normalize_subtitle_format(value):
+    """Normalize a --subtitle-format value to one of {srt, txt, both}."""
+    key = value.strip().lower()
+    if key not in _SUBTITLE_FORMAT_SYNONYMS:
+        accepted = ", ".join(sorted(_SUBTITLE_FORMAT_SYNONYMS))
+        raise argparse.ArgumentTypeError(
+            f"invalid subtitle format: {value!r} (accepted: {accepted})"
+        )
+    return _SUBTITLE_FORMAT_SYNONYMS[key]
+
+
+def build_arg_parser():
+    """Build the CLI argument parser for ct_downloader."""
     parser = argparse.ArgumentParser(description="Česká televize Downloader")
     parser.add_argument("url", nargs="?", help="The iVysílání Episode or Series URL")
     parser.add_argument(
@@ -261,9 +250,9 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=("video", "subtitles", "transcript"),
+        choices=("video", "subtitles"),
         default="video",
-        help="Download video (default), subtitles only, or transcript only",
+        help="Download video (default) or subtitles only",
     )
     parser.add_argument(
         "--subtitles-only",
@@ -273,21 +262,19 @@ def main():
         help="Download subtitles only",
     )
     parser.add_argument(
-        "--transcript-only",
-        action="store_const",
-        const="transcript",
-        dest="mode",
-        help="Download transcript only",
-    )
-    parser.add_argument(
         "--subtitle-format",
-        choices=("srt", "txt"),
+        type=_normalize_subtitle_format,
         default="srt",
         help=(
-            "Format for subtitle-only downloads: srt (default)."
-            " When txt is selected, both .srt and .txt files are saved."
+            "Subtitle output format: srt (default), txt (plain text only),"
+            " or both/srt,txt (keep .srt and also save .txt)"
         ),
     )
+    return parser
+
+
+def main():
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     if args.url:

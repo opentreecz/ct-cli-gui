@@ -82,8 +82,11 @@ def build_download_command(url, selected_quality, download_mode="video", subtitl
     command = get_downloader_command() + [url]
     if download_mode != "video":
         command.extend(["--mode", download_mode])
-    if download_mode == "subtitles" and subtitle_format != "srt":
-        command.extend(["--subtitle-format", subtitle_format])
+    if download_mode == "subtitles":
+        if subtitle_format == "srt,txt":
+            command.extend(["--subtitle-format", "both"])
+        elif subtitle_format == "txt":
+            command.extend(["--subtitle-format", "txt"])
     if selected_quality != "Highest Available":
         command.extend(["--quality", selected_quality.replace("p", "")])
     return command
@@ -144,7 +147,7 @@ def main():
         font=("Segoe UI", 9),
         width=18,
     )
-    mode_dropdown["values"] = ("video", "subtitles", "transcript")
+    mode_dropdown["values"] = ("video", "subtitles")
     mode_dropdown.pack(pady=(0, 10))
 
     subtitle_format_var = tk.StringVar(value="srt")
@@ -155,7 +158,7 @@ def main():
         font=("Segoe UI", 9),
         width=18,
     )
-    subtitle_format_dropdown["values"] = ("srt", "txt")
+    subtitle_format_dropdown["values"] = ("srt", "txt", "srt,txt")
     subtitle_format_dropdown.pack(pady=(0, 10))
 
     tk.Button(

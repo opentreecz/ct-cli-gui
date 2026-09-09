@@ -12,7 +12,7 @@ This project bypasses recent site API changes (which break standard extractors) 
 * **Automatic Subtitles:** Downloads official Czech closed captions, silently converts them from web `.vtt` to standard `.srt`, and soft-embeds them directly into the `.mp4` file (while keeping the external `.srt` file for media servers).
 * **Artwork Fetching:** Scrapes and saves the official high-resolution episode poster as a `.jpg`.
 * **Quality Selection:** Choose your maximum resolution limit (1080p, 720p, 540p, 360p) to save hard drive space.
-* **Subtitle and Transcript Downloads:** Download only the available subtitles or transcript without downloading the video.
+* **Subtitle and Transcript Downloads:** Download only the available subtitles without downloading the video. Subtitles can be saved as `.srt`, plain-text `.txt`, or both.
 * **Two Interfaces:** Includes a desktop GUI and command-line wrappers for Windows, Linux, and macOS.
 
 ## 🛠️ Prerequisites
@@ -164,7 +164,7 @@ repository publishing environment named `pypi` before the first release.
 ## 💻 Usage
 
 ### Option 1: The Desktop GUI
-Start `ct_gui.pyw` using the command for your operating system. Paste an episode or series URL from iVysílání, select a maximum quality and download type (`video`, `subtitles`, or `transcript`), and click **Download**. The GUI launches the downloader in a new terminal where supported.
+Start `ct_gui.pyw` using the command for your operating system. Paste an episode or series URL from iVysílání, select a maximum quality and download type (`video` or `subtitles`), choose a subtitle format (`srt`, `txt`, or `srt,txt` for both), and click **Download**. The GUI launches the downloader in a new terminal where supported.
 
 ### Option 2: The Command Line (CLI)
 Open a terminal in your target download folder and use the wrapper for your operating system:
@@ -178,21 +178,27 @@ ct-dlp.bat "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/21556226
 ct-dlp "https://www.ceskatelevize.cz/porady/11248773911-habsburkove/215562260670001/"
 ```
 
-**Download only subtitles or a transcript:**
+**Download only subtitles:**
 ```text
 ct-dlp --mode subtitles "https://www.ceskatelevize.cz/porady/..."
-ct-dlp --mode transcript "https://www.ceskatelevize.cz/porady/..."
+ct-dlp --subtitles-only "https://www.ceskatelevize.cz/porady/..."
+ct-dlp --mode subtitles --subtitle-format txt "https://www.ceskatelevize.cz/porady/..."
+ct-dlp --mode subtitles --subtitle-format both "https://www.ceskatelevize.cz/porady/..."
 ```
 
-The equivalent aliases `--subtitles-only` and `--transcript-only` are also
-available. These options work for both episode and series URLs and skip media
-and poster downloads.
+The `--subtitles-only` alias is also available. These options work for both
+episode and series URLs and skip media and poster downloads.
 
-Subtitle-only downloads create a standard `.cs.srt` file when the episode
-provides captions. Transcript-only downloads create a `.txt` file when the
-episode provides transcript text. If the requested resource is unavailable,
-the downloader reports that episode and continues processing the remaining
-episodes in a series.
+The `--subtitle-format` flag controls which files are saved:
+
+| Value | Files on disk |
+|---|---|
+| `srt` (default) | `.cs.srt` only |
+| `txt` | `.cs.txt` only (`.srt` is deleted after conversion) |
+| `both` / `srt,txt` | `.cs.srt` and `.cs.txt` |
+
+If subtitles are unavailable, the downloader reports that episode and
+continues processing the remaining episodes in a series.
 
 **Download a series:**
 
@@ -219,8 +225,8 @@ python3 -m pytest --cov=ct_downloader --cov=ct_gui --cov-branch --cov-report=ter
 
 The tests use mocked network, terminal, and subprocess calls, so they do not
 contact Česká televize or download media files. Coverage includes both the
-video workflow and the subtitle/transcript-only workflows, including episode
-and series dispatch. The GitHub Actions workflow runs linting, formatting,
+video workflow and the subtitle-only workflows, including episode and series
+dispatch. The GitHub Actions workflow runs linting, formatting,
 compilation, and branch-coverage checks on Windows, Linux, and macOS.
 
 ## 📤 Publishing a release
