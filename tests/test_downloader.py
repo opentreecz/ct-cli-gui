@@ -94,6 +94,23 @@ def test_get_html_returns_empty_string_on_network_error(monkeypatch, capsys):
     assert "Error fetching page" in capsys.readouterr().out
 
 
+def test_srt_to_text_strips_timing_and_indices():
+    srt = (
+        "1\n"
+        "00:00:01,000 --> 00:00:02,000\n"
+        "Hello <i>world</i>\n"
+        "\n"
+        "2\n"
+        "00:00:03,000 --> 00:00:04,000\n"
+        "Second line\n"
+    )
+    assert ct_downloader._srt_to_text(srt) == "Hello world\nSecond line"
+
+
+def test_srt_to_text_returns_empty_string_for_empty_input():
+    assert ct_downloader._srt_to_text("") == ""
+
+
 def test_main_dispatches_episode_url(monkeypatch):
     called = []
     monkeypatch.setattr(
@@ -387,7 +404,9 @@ def test_main_passes_subtitle_mode_to_episode(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode: called.append((url, quality, mode)),
+        lambda url, quality, mode, subtitle_format: called.append(
+            (url, quality, mode, subtitle_format)
+        ),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -402,7 +421,12 @@ def test_main_passes_subtitle_mode_to_episode(monkeypatch):
     ct_downloader.main()
 
     assert called == [
-        ("https://www.ceskatelevize.cz/porady/123-show/12345678901/", None, "subtitles")
+        (
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            None,
+            "subtitles",
+            "srt",
+        )
     ]
 
 
@@ -557,3 +581,253 @@ def test_download_episode_restores_video_when_subtitle_embedding_fails(
 
     assert (tmp_path / "Series - S1E01 - Episode.mp4").read_text() == "video"
     assert "Failed to embed subtitles" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# _download_subtitles: txt format keeps .srt and also writes .txt
+# ---------------------------------------------------------------------------
+
+
+def test_download_subtitles_txt_keeps_srt_and_writes_txt(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader.urllib.request,
+        "urlretrieve",
+        lambda url, filename: (tmp_path / filename).write_text("vtt"),
+    )
+
+    def run(command, **kwargs):
+        (tmp_path / "Episode.cs.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\nHello <i>world</i>\n"
+        )
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    result = ct_downloader._download_subtitles(
+        '{"subtitle":"https://media.example/subtitle.vtt"}', "Episode", "txt"
+    )
+
+    assert result == "Episode.cs.srt"
+    assert (tmp_path / "Episode.cs.srt").exists()
+    assert (tmp_path / "Episode.cs.txt").read_text(encoding="utf-8") == "Hello world\n"
+
+
+def test_download_subtitles_default_format_does_not_write_txt(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader.urllib.request,
+        "urlretrieve",
+        lambda url, filename: (tmp_path / filename).write_text("vtt"),
+    )
+
+    def run(command, **kwargs):
+        (tmp_path / "Episode.cs.srt").write_text("subtitle content")
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    result = ct_downloader._download_subtitles(
+        '{"subtitle":"https://media.example/subtitle.vtt"}', "Episode"
+    )
+
+    assert result == "Episode.cs.srt"
+    assert not (tmp_path / "Episode.cs.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# download_episode: subtitle_format is threaded through in subtitles mode
+# ---------------------------------------------------------------------------
+
+
+def test_download_episode_subtitles_mode_txt_writes_both_files(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"subtitle": "https://media.example/subtitle.vtt"}'
+
+    def download(url, filename):
+        (tmp_path / filename).write_text("vtt")
+
+    def run(command, **kwargs):
+        (tmp_path / "Episode - Series.cs.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:02,000\nHello world\n"
+        )
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        download_mode="subtitles",
+        subtitle_format="txt",
+    )
+
+    assert (tmp_path / "Episode - Series.cs.srt").exists()
+    assert (tmp_path / "Episode - Series.cs.txt").exists()
+    out = capsys.readouterr().out
+    assert "Generated standard subtitle file" in out
+    assert "Also saved as plain-text subtitle file" in out
+
+
+def test_download_episode_video_mode_ignores_subtitle_format(monkeypatch, tmp_path):
+    """subtitle_format is irrelevant in video mode — always uses srt for embedding."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"stream": "https://media.example/episode.mpd"}'
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(
+        ct_downloader.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 1})(),
+    )
+
+    # Should not raise even when subtitle_format="txt" is passed in video mode
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        download_mode="video",
+        subtitle_format="txt",
+    )
+
+    assert not (tmp_path / "Episode - Series.cs.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing smoke tests
+# ---------------------------------------------------------------------------
+
+
+def test_main_accepts_subtitle_format_srt_argument(monkeypatch):
+    """--subtitle-format srt must be accepted by argparse without SystemExit."""
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format: called.append(subtitle_format),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "--mode",
+            "subtitles",
+            "--subtitle-format",
+            "srt",
+        ],
+    )
+
+    ct_downloader.main()
+
+    assert called == ["srt"]
+
+
+def test_main_accepts_subtitle_format_txt_argument(monkeypatch):
+    """--subtitle-format txt must be accepted by argparse without SystemExit.
+
+    This is the regression guard: before the fix this call raised SystemExit(2)
+    with 'unrecognized arguments: --subtitle-format txt'.
+    """
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format: called.append(subtitle_format),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "--mode",
+            "subtitles",
+            "--subtitle-format",
+            "txt",
+        ],
+    )
+
+    ct_downloader.main()
+
+    assert called == ["txt"]
+
+
+def test_main_rejects_unknown_subtitle_format(monkeypatch, capsys):
+    """Unrecognised --subtitle-format values must be rejected by argparse."""
+    import pytest
+
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "--subtitle-format",
+            "docx",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        ct_downloader.main()
+
+    assert exc_info.value.code == 2
+
+
+def test_main_passes_subtitle_format_txt_to_series(monkeypatch):
+    """Series batch dispatch must forward subtitle_format to every episode."""
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format: called.append((mode, subtitle_format)),
+    )
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "/porady/123-show/12345678901/ /porady/123-show/12345678902/",
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/",
+            "--mode",
+            "subtitles",
+            "--subtitle-format",
+            "txt",
+        ],
+    )
+
+    ct_downloader.main()
+
+    assert called == [("subtitles", "txt"), ("subtitles", "txt")]
