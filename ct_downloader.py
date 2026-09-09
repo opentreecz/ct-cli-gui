@@ -263,9 +263,7 @@ def _normalize_subtitle_format(value):
 def build_arg_parser():
     """Build the CLI argument parser for ct_downloader."""
     parser = argparse.ArgumentParser(description="Česká televize Downloader")
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("url", nargs="?", help="The iVysílání Episode or Series URL")
     parser.add_argument(
         "-q",

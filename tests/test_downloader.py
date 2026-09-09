@@ -679,9 +679,7 @@ def test_download_episode_subtitles_mode_both_writes_both_files(monkeypatch, tmp
     assert "Also saved as plain-text subtitle file" in out
 
 
-def test_download_episode_subtitles_mode_txt_only_produces_txt_only(
-    monkeypatch, tmp_path, capsys
-):
+def test_download_episode_subtitles_mode_txt_only_produces_txt_only(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         ct_downloader,
@@ -1032,10 +1030,12 @@ def test_version_flag(monkeypatch, capsys):
 
 def test_main_interactive_input(monkeypatch, capsys):
     """When no URL argument is given, main() prompts via input()."""
-    inputs = iter([
-        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
-        "720",
-    ])
+    inputs = iter(
+        [
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "720",
+        ]
+    )
     monkeypatch.setattr(ct_downloader.sys, "argv", ["ct_downloader.py"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
 
@@ -1048,7 +1048,9 @@ def test_main_interactive_input(monkeypatch, capsys):
 
     ct_downloader.main()
 
-    assert called == [(
-        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
-        "720",
-    )]
+    assert called == [
+        (
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "720",
+        )
+    ]
