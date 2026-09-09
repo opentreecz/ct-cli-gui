@@ -1,19 +1,29 @@
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DOWNLOADER_SCRIPT = SCRIPT_DIR / "ct_downloader.py"
 DEFAULT_DOWNLOAD_DIR = Path.home() / "Videos"
-DOWNLOAD_DIR = Path(
-    os.environ.get("CT_DOWNLOAD_DIR", str(DEFAULT_DOWNLOAD_DIR))
-).expanduser()
+DOWNLOAD_DIR = Path(os.environ.get("CT_DOWNLOAD_DIR", str(DEFAULT_DOWNLOAD_DIR))).expanduser()
+
+# Modern minimalist palette
+COLORS = {
+    "bg": "#F7F7F8",
+    "surface": "#FFFFFF",
+    "text": "#1A1A1A",
+    "muted": "#6B6B6B",
+    "accent": "#E2001A",
+    "accent_active": "#B30015",
+    "border": "#D9D9DE",
+}
 
 
 def get_console_python():
@@ -52,13 +62,22 @@ def get_downloader_command():
     )
 
 
-def launch_download(command):
-    options = {"cwd": DOWNLOAD_DIR}
+def parse_urls(raw_text):
+    """Split pasted content into a list of URLs.
+
+    Accepts newline-, comma-, and whitespace-separated content.
+    """
+    tokens = re.split(r"[\s,]+", raw_text.strip())
+    return [token for token in tokens if token]
+
+
+def launch_download(command, cwd):
+    options = {"cwd": cwd}
     if sys.platform == "win32":
         options["creationflags"] = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
     elif sys.platform == "darwin":
         shell_command = " ".join(shlex.quote(argument) for argument in command)
-        shell_command = f"cd {shlex.quote(str(DOWNLOAD_DIR))} && {shell_command}"
+        shell_command = f"cd {shlex.quote(str(cwd))} && {shell_command}"
         command = [
             "osascript",
             "-e",
@@ -83,171 +102,286 @@ def launch_download(command):
     subprocess.Popen(command, **options)
 
 
-def build_download_command(url, selected_quality, download_mode="video", subtitle_format="srt"):
+def build_download_command(
+    urls,
+    selected_quality,
+    download_mode="video",
+    subtitle_format="srt",
+    output_dir=None,
+    series_folders=False,
+):
+    """Build the downloader CLI command.
+
+    *urls* may be a single URL string or a list of URLs.  Returns ``None`` in
+    frozen mode (handled in-process).
+    """
     base = get_downloader_command()
     if base is None:
-        # Frozen mode — will be handled in-process by start_download.
         return None
-    command = base + [url]
+    if isinstance(urls, str):
+        urls = [urls]
+    command = list(base)
     if download_mode != "video":
         command.extend(["--mode", download_mode])
-    if download_mode == "subtitles":
-        if subtitle_format == "srt,txt":
-            command.extend(["--subtitle-format", "both"])
-        elif subtitle_format == "txt":
-            command.extend(["--subtitle-format", "txt"])
+    if subtitle_format == "srt,txt":
+        command.extend(["--subtitle-format", "both"])
+    elif subtitle_format == "txt":
+        command.extend(["--subtitle-format", "txt"])
     if selected_quality != "Highest Available":
         command.extend(["--quality", selected_quality.replace("p", "")])
+    if output_dir:
+        command.extend(["--output-dir", str(output_dir)])
+    if series_folders:
+        command.append("--series-folders")
+    command.extend(urls)
     return command
 
 
-def _run_frozen_download(url, quality, mode, subtitle_format):
+def _run_frozen_download(urls, quality, mode, subtitle_format, output_dir, series_folders):
     """Run the downloader in-process when the GUI is a frozen binary."""
     import ct_downloader
 
-    args = [url]
-    if mode != "video":
-        args.extend(["--mode", mode])
-    if mode == "subtitles":
-        if subtitle_format == "srt,txt":
-            args.extend(["--subtitle-format", "both"])
-        elif subtitle_format == "txt":
-            args.extend(["--subtitle-format", "txt"])
-    if quality != "Highest Available":
-        args.extend(["--quality", quality.replace("p", "")])
+    if isinstance(urls, str):
+        urls = [urls]
+    normalized_quality = quality.lower().replace("p", "") if quality != "Highest Available" else None
+    fmt = "both" if subtitle_format == "srt,txt" else subtitle_format
 
-    parser = ct_downloader.build_arg_parser()
-    parsed = parser.parse_args(args)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        os.chdir(output_dir)
 
-    parsed_url = parsed.url.strip()
-    parsed_quality = (
-        parsed.quality.lower().replace("p", "") if parsed.quality else None
-    )
-    import re
-
-    episode_match = re.search(r"/porady/\d+-[^/]+/(\d{10,})/?$", parsed_url)
-    series_match = re.search(r"(/porady/\d+-[^/]+)/?$", parsed_url)
-
-    if episode_match:
-        if parsed.mode == "video":
-            ct_downloader.download_episode(parsed_url, parsed_quality)
-        else:
-            ct_downloader.download_episode(
-                parsed_url, parsed_quality, parsed.mode, parsed.subtitle_format
-            )
-    elif series_match:
-        print("[+] Series URL detected. Searching for episodes...")
-        series_path = series_match.group(1)
-        html = ct_downloader.get_html(parsed_url)
-        matches = re.findall(rf"{series_path}/(\d{{10,}})/?", html)
-        if not matches:
-            print("[-] No episodes found on this page.")
-            return
-        unique_ids = list(dict.fromkeys(matches))
-        print(f"[+] Found {len(unique_ids)} episodes. Starting batch download...\n")
-        for vid_id in unique_ids:
-            ep_url = f"{ct_downloader.SITE_URL}{series_path}/{vid_id}/"
-            if parsed.mode == "video":
-                ct_downloader.download_episode(ep_url, parsed_quality)
-            else:
-                ct_downloader.download_episode(
-                    ep_url, parsed_quality, parsed.mode, parsed.subtitle_format
-                )
-            print("-" * 60)
-        print("\n[+] Batch download complete!")
-    else:
-        print("[-] Invalid Česká televize URL format.")
+    for url in urls:
+        ct_downloader.process_url(url, normalized_quality, mode, fmt, series_folders)
 
 
 def start_download():
-    url = url_entry.get().strip()
+    raw = url_text.get("1.0", tk.END)
+    urls = parse_urls(raw)
     selected_quality = quality_var.get()
-    selected_mode = mode_var.get() if "mode_var" in globals() else "video"
-    selected_subtitle_format = (
-        subtitle_format_var.get() if "subtitle_format_var" in globals() else "srt"
+    selected_mode = mode_var.get()
+    selected_subtitle_format = subtitle_format_var.get()
+    selected_output = output_var.get().strip() or str(DOWNLOAD_DIR)
+    organize = bool(series_var.get())
+
+    if not urls:
+        return
+
+    output_path = Path(selected_output).expanduser()
+    try:
+        output_path.mkdir(parents=True, exist_ok=True)
+        command = build_download_command(
+            urls,
+            selected_quality,
+            selected_mode,
+            selected_subtitle_format,
+            output_dir=str(output_path),
+            series_folders=organize,
+        )
+        if command is None:
+            original_dir = os.getcwd()
+            try:
+                _run_frozen_download(
+                    urls,
+                    selected_quality,
+                    selected_mode,
+                    selected_subtitle_format,
+                    str(output_path),
+                    organize,
+                )
+            finally:
+                os.chdir(original_dir)
+        else:
+            launch_download(command, cwd=str(output_path))
+    except OSError as error:
+        messagebox.showerror("Unable to start download", str(error))
+        return
+
+    url_text.delete("1.0", tk.END)
+
+
+def _browse_output():
+    chosen = filedialog.askdirectory(initialdir=output_var.get() or str(DOWNLOAD_DIR))
+    if chosen:
+        output_var.set(chosen)
+
+
+def _configure_style():
+    style = ttk.Style()
+    with_theme = "clam" if "clam" in style.theme_names() else style.theme_use()
+    style.theme_use(with_theme)
+
+    style.configure("TFrame", background=COLORS["bg"])
+    style.configure("Card.TFrame", background=COLORS["surface"])
+    style.configure(
+        "TLabel",
+        background=COLORS["bg"],
+        foreground=COLORS["text"],
+        font=("Segoe UI", 10),
     )
-
-    if url:
-        try:
-            command = build_download_command(
-                url, selected_quality, selected_mode, selected_subtitle_format
-            )
-            DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-            if command is None:
-                # Frozen mode: run in-process in the download directory.
-                original_dir = os.getcwd()
-                try:
-                    os.chdir(DOWNLOAD_DIR)
-                    _run_frozen_download(
-                        url, selected_quality, selected_mode, selected_subtitle_format
-                    )
-                finally:
-                    os.chdir(original_dir)
-            else:
-                launch_download(command)
-        except OSError as error:
-            messagebox.showerror("Unable to start download", str(error))
-            return
-
-        url_entry.delete(0, tk.END)
+    style.configure(
+        "Muted.TLabel",
+        background=COLORS["bg"],
+        foreground=COLORS["muted"],
+        font=("Segoe UI", 9),
+    )
+    style.configure(
+        "Title.TLabel",
+        background=COLORS["bg"],
+        foreground=COLORS["text"],
+        font=("Segoe UI", 15, "bold"),
+    )
+    style.configure(
+        "TCheckbutton",
+        background=COLORS["bg"],
+        foreground=COLORS["text"],
+        font=("Segoe UI", 10),
+    )
+    style.configure("TCombobox", font=("Segoe UI", 10))
+    style.configure(
+        "Accent.TButton",
+        font=("Segoe UI", 11, "bold"),
+        foreground="#FFFFFF",
+        background=COLORS["accent"],
+        borderwidth=0,
+        focusthickness=0,
+        padding=(10, 8),
+    )
+    style.map(
+        "Accent.TButton",
+        background=[("active", COLORS["accent_active"]), ("pressed", COLORS["accent_active"])],
+        foreground=[("disabled", "#EEEEEE")],
+    )
+    style.configure("Ghost.TButton", font=("Segoe UI", 9), padding=(8, 4))
+    return style
 
 
 def main():
-    global quality_var, url_entry, mode_var, subtitle_format_var
+    global quality_var, url_text, mode_var, subtitle_format_var, output_var, series_var
 
     root = tk.Tk()
     root.title("ČT Downloader")
-    root.geometry("550x220")
-    root.resizable(False, False)
+    root.geometry("620x520")
+    root.minsize(520, 460)
+    root.configure(bg=COLORS["bg"])
 
-    tk.Label(
-        root, text="Paste Česká televize URL:", font=("Segoe UI", 11)
-    ).pack(pady=(10, 5))
-    url_entry = tk.Entry(root, width=60, font=("Segoe UI", 10))
-    url_entry.pack(pady=5)
+    _configure_style()
 
+    container = ttk.Frame(root, style="TFrame", padding=24)
+    container.pack(fill="both", expand=True)
+    container.columnconfigure(0, weight=1)
+
+    ttk.Label(container, text="Česká televize Downloader", style="Title.TLabel").grid(
+        row=0, column=0, sticky="w", pady=(0, 2)
+    )
+    ttk.Label(
+        container,
+        text="Paste one or more iVysílání URLs (newline, comma, or space separated).",
+        style="Muted.TLabel",
+    ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+
+    # --- URLs (multi-line, scrollable) ---
+    url_frame = ttk.Frame(container, style="TFrame")
+    url_frame.grid(row=2, column=0, sticky="nsew")
+    url_frame.columnconfigure(0, weight=1)
+    url_frame.rowconfigure(0, weight=1)
+    container.rowconfigure(2, weight=1)
+
+    url_text = tk.Text(
+        url_frame,
+        height=4,
+        wrap="none",
+        font=("Segoe UI", 10),
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        highlightcolor=COLORS["accent"],
+        bg=COLORS["surface"],
+        fg=COLORS["text"],
+        insertbackground=COLORS["text"],
+        padx=8,
+        pady=6,
+    )
+    url_text.grid(row=0, column=0, sticky="nsew")
+    url_scroll = ttk.Scrollbar(url_frame, orient="vertical", command=url_text.yview)
+    url_text.configure(yscrollcommand=url_scroll.set)
+    url_scroll.grid(row=0, column=1, sticky="ns")
+
+    def _grow_url_box(_event=None):
+        line_count = int(url_text.index("end-1c").split(".")[0])
+        url_text.configure(height=max(4, min(line_count, 12)))
+
+    url_text.bind("<KeyRelease>", _grow_url_box)
+
+    # --- Destination folder ---
+    dest_frame = ttk.Frame(container, style="TFrame")
+    dest_frame.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    dest_frame.columnconfigure(0, weight=1)
+    ttk.Label(dest_frame, text="Destination folder").grid(
+        row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
+    )
+    output_var = tk.StringVar(value=str(DOWNLOAD_DIR))
+    dest_entry = tk.Entry(
+        dest_frame,
+        textvariable=output_var,
+        font=("Segoe UI", 10),
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        highlightcolor=COLORS["accent"],
+        bg=COLORS["surface"],
+        fg=COLORS["text"],
+    )
+    dest_entry.grid(row=1, column=0, sticky="ew", ipady=5)
+    ttk.Button(dest_frame, text="Browse…", style="Ghost.TButton", command=_browse_output).grid(
+        row=1, column=1, sticky="e", padx=(8, 0)
+    )
+
+    # --- Options row ---
+    options = ttk.Frame(container, style="TFrame")
+    options.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+    for col in range(3):
+        options.columnconfigure(col, weight=1)
+
+    ttk.Label(options, text="Quality").grid(row=0, column=0, sticky="w")
     quality_var = tk.StringVar(value="Highest Available")
     quality_dropdown = ttk.Combobox(
-        root,
-        textvariable=quality_var,
-        state="readonly",
-        font=("Segoe UI", 9),
-        width=18,
+        options, textvariable=quality_var, state="readonly", font=("Segoe UI", 9), width=16
     )
     quality_dropdown["values"] = ("Highest Available", "1080p", "720p", "540p", "360p")
-    quality_dropdown.pack(pady=(0, 10))
+    quality_dropdown.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(2, 0))
 
+    ttk.Label(options, text="Mode").grid(row=0, column=1, sticky="w")
     mode_var = tk.StringVar(value="video")
     mode_dropdown = ttk.Combobox(
-        root,
-        textvariable=mode_var,
-        state="readonly",
-        font=("Segoe UI", 9),
-        width=18,
+        options, textvariable=mode_var, state="readonly", font=("Segoe UI", 9), width=16
     )
     mode_dropdown["values"] = ("video", "subtitles")
-    mode_dropdown.pack(pady=(0, 10))
+    mode_dropdown.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(2, 0))
 
+    ttk.Label(options, text="Subtitle format").grid(row=0, column=2, sticky="w")
     subtitle_format_var = tk.StringVar(value="srt")
     subtitle_format_dropdown = ttk.Combobox(
-        root,
-        textvariable=subtitle_format_var,
-        state="readonly",
-        font=("Segoe UI", 9),
-        width=18,
+        options, textvariable=subtitle_format_var, state="readonly", font=("Segoe UI", 9), width=16
     )
     subtitle_format_dropdown["values"] = ("srt", "txt", "srt,txt")
-    subtitle_format_dropdown.pack(pady=(0, 10))
+    subtitle_format_dropdown.grid(row=1, column=2, sticky="ew", pady=(2, 0))
 
-    tk.Button(
-        root,
+    # --- Organize checkbox (default OFF) ---
+    series_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(
+        container,
+        text="Organize into series / season folders",
+        variable=series_var,
+    ).grid(row=5, column=0, sticky="w", pady=(16, 0))
+
+    # --- Download button ---
+    ttk.Button(
+        container,
         text="Download",
+        style="Accent.TButton",
         command=start_download,
-        font=("Segoe UI", 10, "bold"),
-        bg="#E2001A",
-        fg="white",
-        width=20,
-    ).pack(pady=5)
+    ).grid(row=6, column=0, sticky="ew", pady=(20, 0))
+
     root.mainloop()
 
 

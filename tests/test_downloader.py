@@ -1,3 +1,5 @@
+import os
+
 import ct_downloader
 
 
@@ -102,7 +104,7 @@ def test_main_dispatches_episode_url(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality: called.append((url, quality)),
+        lambda url, quality, mode, subtitle_format, organize: called.append((url, quality)),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -269,7 +271,11 @@ def test_download_episode_embeds_subtitles(monkeypatch, tmp_path, capsys):
 
 def test_main_dispatches_series_episodes(monkeypatch):
     called = []
-    monkeypatch.setattr(ct_downloader, "download_episode", lambda url, quality: called.append(url))
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format, organize: called.append(url),
+    )
     monkeypatch.setattr(
         ct_downloader,
         "get_html",
@@ -342,7 +348,7 @@ def test_main_rejects_invalid_url(monkeypatch, capsys):
 
     ct_downloader.main()
 
-    assert "Invalid Česká televize URL format" in capsys.readouterr().out
+    assert "Invalid Ceska televize URL format" in capsys.readouterr().out
 
 
 def test_main_normalizes_quality_argument(monkeypatch):
@@ -350,7 +356,7 @@ def test_main_normalizes_quality_argument(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality: called.append((url, quality)),
+        lambda url, quality, mode, subtitle_format, organize: called.append((url, quality)),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -373,7 +379,7 @@ def test_main_passes_subtitle_mode_to_episode(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(
+        lambda url, quality, mode, subtitle_format, organize: called.append(
             (url, quality, mode, subtitle_format)
         ),
     )
@@ -583,7 +589,8 @@ def test_download_subtitles_both_keeps_srt_and_writes_txt(monkeypatch, tmp_path)
     assert (tmp_path / "Episode.cs.txt").read_text(encoding="utf-8") == "Hello world\n"
 
 
-def test_download_subtitles_txt_only_deletes_srt(monkeypatch, tmp_path):
+def test_download_subtitles_txt_writes_both_and_keeps_srt(monkeypatch, tmp_path):
+    """_download_subtitles always keeps .srt; retention is applied by caller."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         ct_downloader.urllib.request,
@@ -603,8 +610,8 @@ def test_download_subtitles_txt_only_deletes_srt(monkeypatch, tmp_path):
         '{"subtitle":"https://media.example/subtitle.vtt"}', "Episode", "txt"
     )
 
-    assert result == "Episode.cs.txt"
-    assert not (tmp_path / "Episode.cs.srt").exists()
+    assert result == "Episode.cs.srt"
+    assert (tmp_path / "Episode.cs.srt").exists()
     assert (tmp_path / "Episode.cs.txt").read_text(encoding="utf-8") == "Hello world\n"
 
 
@@ -722,13 +729,14 @@ def test_download_episode_subtitles_mode_txt_only_produces_txt_only(monkeypatch,
     assert "Also saved as plain-text subtitle file" in out
 
 
-def test_download_episode_video_mode_ignores_subtitle_format(monkeypatch, tmp_path):
-    """subtitle_format is irrelevant in video mode — always uses srt for embedding."""
+def test_download_episode_video_mode_with_srt_txt_writes_txt(monkeypatch, tmp_path, capsys):
+    """Bug 2 fix: video mode with srt,txt embeds srt, keeps external srt AND txt."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ct_downloader, "_resolve_tool", lambda name: name)
     monkeypatch.setattr(
         ct_downloader,
         "get_html",
-        lambda url: "<title>Episode - Series</title>",
+        lambda url: "<title>1/10 Episode - Series</title>",
     )
 
     class Response:
@@ -739,23 +747,88 @@ def test_download_episode_video_mode_ignores_subtitle_format(monkeypatch, tmp_pa
             return None
 
         def read(self):
-            return b'{"stream": "https://media.example/episode.mpd"}'
+            return (
+                b'{"subtitle": "https://media.example/subtitle.vtt", '
+                b'"stream": "https://media.example/episode.mpd"}'
+            )
+
+    def download(url, filename):
+        (tmp_path / filename).write_text("vtt")
+
+    def run(command, **kwargs):
+        if command[0] == "yt-dlp":
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
+        elif len(command) > 5:
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("embedded")
+        else:
+            (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nHello world\n"
+            )
+        return type("Result", (), {"returncode": 0})()
 
     monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
-    monkeypatch.setattr(
-        ct_downloader.subprocess,
-        "run",
-        lambda *args, **kwargs: type("Result", (), {"returncode": 1})(),
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        download_mode="video",
+        subtitle_format="both",
     )
 
-    # Should not raise even when subtitle_format="txt" is passed in video mode
+    assert (tmp_path / "Series - S1E01 - Episode.cs.txt").exists()
+    assert (tmp_path / "Series - S1E01 - Episode.cs.srt").exists()
+
+
+def test_download_episode_video_mode_txt_only_removes_external_srt(monkeypatch, tmp_path):
+    """Video + txt: embed srt, keep only external .txt (external .srt removed)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ct_downloader, "_resolve_tool", lambda name: name)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>1/10 Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return (
+                b'{"subtitle": "https://media.example/subtitle.vtt", '
+                b'"stream": "https://media.example/episode.mpd"}'
+            )
+
+    def download(url, filename):
+        (tmp_path / filename).write_text("vtt")
+
+    def run(command, **kwargs):
+        if command[0] == "yt-dlp":
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
+        elif len(command) > 5:
+            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("embedded")
+        else:
+            (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nHello world\n"
+            )
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
     ct_downloader.download_episode(
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         download_mode="video",
         subtitle_format="txt",
     )
 
-    assert not (tmp_path / "Episode - Series.cs.txt").exists()
+    assert (tmp_path / "Series - S1E01 - Episode.cs.txt").exists()
+    assert not (tmp_path / "Series - S1E01 - Episode.cs.srt").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -769,7 +842,7 @@ def test_main_accepts_subtitle_format_srt_argument(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(subtitle_format),
+        lambda url, quality, mode, subtitle_format, organize: called.append(subtitle_format),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -795,7 +868,7 @@ def test_main_accepts_subtitle_format_txt_argument(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(subtitle_format),
+        lambda url, quality, mode, subtitle_format, organize: called.append(subtitle_format),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -821,7 +894,7 @@ def test_main_accepts_subtitle_format_both_argument(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(subtitle_format),
+        lambda url, quality, mode, subtitle_format, organize: called.append(subtitle_format),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -868,7 +941,9 @@ def test_main_passes_subtitle_format_txt_to_series(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append((mode, subtitle_format)),
+        lambda url, quality, mode, subtitle_format, organize: called.append(
+            (mode, subtitle_format)
+        ),
     )
     monkeypatch.setattr(
         ct_downloader,
@@ -923,7 +998,7 @@ def test_main_accepts_srt_comma_txt_synonym(monkeypatch):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(subtitle_format),
+        lambda url, quality, mode, subtitle_format, organize: called.append(subtitle_format),
     )
     monkeypatch.setattr(
         ct_downloader.sys,
@@ -1054,7 +1129,7 @@ def test_main_interactive_input(monkeypatch, capsys):
     monkeypatch.setattr(
         ct_downloader,
         "download_episode",
-        lambda url, quality: called.append((url, quality)),
+        lambda url, quality, mode, subtitle_format, organize: called.append((url, quality)),
     )
 
     ct_downloader.main()
@@ -1064,4 +1139,192 @@ def test_main_interactive_input(monkeypatch, capsys):
             "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
             "720",
         )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# parse_episode_title / build_output_path
+# ---------------------------------------------------------------------------
+
+
+def test_parse_episode_title_structured():
+    meta = ct_downloader.parse_episode_title("3/10 The Episode: Title - Example Series | iVysílání")
+    assert meta["clean_title"] == "Example Series - S1E03 - The Episode- Title"
+    assert meta["series_name"] == "Example Series"
+    assert meta["season"] == 1
+    assert meta["episode"] == 3
+
+
+def test_parse_episode_title_fallback():
+    meta = ct_downloader.parse_episode_title("A/B: C | iVysílání")
+    assert meta["clean_title"] == "A-B- C"
+    assert meta["season"] == 1
+    assert meta["episode"] is None
+
+
+def test_build_output_path_flat():
+    result = ct_downloader.build_output_path("Show - S1E01 - Ep", "Show", 1, "mp4", False)
+    assert result == "Show - S1E01 - Ep.mp4"
+
+
+def test_build_output_path_organized(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    result = ct_downloader.build_output_path("Show - S1E01 - Ep", "Show", 1, "mp4", True)
+    import os
+
+    assert result == os.path.join("Show", "Season 1", "Show - S1E01 - Ep.mp4")
+    assert (tmp_path / "Show" / "Season 1").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# --output-dir
+# ---------------------------------------------------------------------------
+
+
+def test_main_output_dir_changes_cwd(monkeypatch, tmp_path):
+    target = tmp_path / "downloads"
+    seen = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format, organize: seen.append(os.getcwd()),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "--output-dir",
+            str(target),
+        ],
+    )
+    original = os.getcwd()
+    try:
+        ct_downloader.main()
+    finally:
+        os.chdir(original)
+
+    assert target.is_dir()
+    assert os.path.realpath(seen[0]) == os.path.realpath(str(target))
+
+
+# ---------------------------------------------------------------------------
+# --series-folders
+# ---------------------------------------------------------------------------
+
+
+def test_main_passes_series_folders_flag(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format, organize: seen.append(organize),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "--series-folders",
+        ],
+    )
+
+    ct_downloader.main()
+
+    assert seen == [True]
+
+
+def test_main_series_folders_default_off(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format, organize: seen.append(organize),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        ["ct_downloader.py", "https://www.ceskatelevize.cz/porady/123-show/12345678901/"],
+    )
+
+    ct_downloader.main()
+
+    assert seen == [False]
+
+
+def test_download_episode_organized_places_files(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ct_downloader, "_resolve_tool", lambda name: name)
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<title>1/10 Episode - Series</title>",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b'{"subtitle": "https://media.example/subtitle.vtt"}'
+
+    def download(url, filename):
+        with open(filename, "w") as fh:
+            fh.write("vtt")
+
+    def run(command, **kwargs):
+        # ffmpeg writes the srt into the organized folder
+        import os as _os
+
+        target = _os.path.join("Series", "Season 1", "Series - S1E01 - Episode.cs.srt")
+        with open(target, "w") as fh:
+            fh.write("1\n00:00:01,000 --> 00:00:02,000\nHello\n")
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
+    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    ct_downloader.download_episode(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        download_mode="subtitles",
+        subtitle_format="srt",
+        organize=True,
+    )
+
+    assert (tmp_path / "Series" / "Season 1" / "Series - S1E01 - Episode.cs.srt").exists()
+
+
+# ---------------------------------------------------------------------------
+# Multiple URLs
+# ---------------------------------------------------------------------------
+
+
+def test_main_multiple_urls(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format, organize: seen.append(url),
+    )
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        [
+            "ct_downloader.py",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678902/",
+        ],
+    )
+
+    ct_downloader.main()
+
+    assert seen == [
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "https://www.ceskatelevize.cz/porady/123-show/12345678902/",
     ]

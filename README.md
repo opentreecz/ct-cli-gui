@@ -195,6 +195,10 @@ python ct_gui.pyw            # Desktop GUI
 python ct_downloader.py URL  # CLI directly
 ```
 
+The desktop GUI lets you paste **multiple URLs** (newline-, comma-, or
+space-separated), choose a **destination folder**, pick quality / mode /
+subtitle format, and toggle **series/season folder organization**.
+
 Shell wrappers are provided for convenience:
 
 ```sh
@@ -239,16 +243,43 @@ ct-dlp --mode subtitles --subtitle-format both "https://www.ceskatelevize.cz/por
 The `--subtitles-only` alias is also available. These options work for both
 episode and series URLs and skip media and poster downloads.
 
-The `--subtitle-format` flag controls which files are saved:
+The `--subtitle-format` flag controls which subtitle files are saved. It now
+applies to **video downloads too** (not only subtitles-only mode):
 
-| Value | Files on disk |
-|---|---|
-| `srt` (default) | `.cs.srt` only |
-| `txt` | `.cs.txt` only (`.srt` is deleted after conversion) |
-| `both` / `srt,txt` | `.cs.srt` and `.cs.txt` |
+| Mode | `--subtitle-format` | `.mp4` (embedded) | external `.srt` | external `.txt` |
+|---|---|---|---|---|
+| video | `srt` (default) | ✅ | ✅ | ❌ |
+| video | `srt,txt` / `both` | ✅ | ✅ | ✅ |
+| video | `txt` | ✅ | ❌ | ✅ |
+| subtitles | `srt` | — | ✅ | ❌ |
+| subtitles | `srt,txt` / `both` | — | ✅ | ✅ |
+| subtitles | `txt` | — | ❌ | ✅ |
 
 If subtitles are unavailable, the downloader reports that episode and
 continues processing the remaining episodes in a series.
+
+**Choose an output directory:**
+```text
+ct-dlp -o "/path/to/downloads" "https://www.ceskatelevize.cz/porady/..."
+ct-dlp --output-dir "/path/to/downloads" "https://www.ceskatelevize.cz/porady/..."
+```
+If no output directory is given, files are saved to the current working
+directory.
+
+**Organize into series/season folders:**
+```text
+ct-dlp --series-folders "https://www.ceskatelevize.cz/porady/..."
+```
+When enabled, files are placed in `<Series>/Season 1/<file>` subfolders
+(default: OFF). Note: Česká televize titles do not expose a season number, so
+the season folder is always `Season 1`.
+
+**Download multiple URLs at once:**
+```text
+ct-dlp URL1 URL2 URL3
+```
+Each URL (episode or series) is processed in turn. Combined with
+`--series-folders`, this keeps downloads from multiple shows organized.
 
 **Download a series:**
 

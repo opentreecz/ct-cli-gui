@@ -7,7 +7,7 @@ import sys
 import urllib.request
 import uuid
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
 REQUEST_TIMEOUT = 30
@@ -39,7 +39,16 @@ def _resolve_tool(name):
     return name
 
 
-def format_episode_name(raw_title):
+def _sanitize(value):
+    return re.sub(r'[\\/*?:"<>|]', "-", value)
+
+
+def parse_episode_title(raw_title):
+    """Parse a page <title> into structured episode metadata.
+
+    Returns a dict with keys: clean_title, series_name, season, episode.
+    Season is always 1 (Ceska televize titles do not expose a season number).
+    """
     name = raw_title.split("|")[0].strip()
     parts = name.split(" - ")
     if len(parts) >= 2:
@@ -47,11 +56,41 @@ def format_episode_name(raw_title):
         ep_info = " - ".join(parts[:-1]).strip()
         match = re.match(r"^(\d+)/\d+\s+(.*)", ep_info)
         if match:
-            ep_num = match.group(1)
+            ep_num = int(match.group(1))
             ep_title = match.group(2).strip()
-            formatted_name = f"{series_name} - S1E{int(ep_num):02d} - {ep_title}"
-            return re.sub(r'[\\/*?:"<>|]', "-", formatted_name)
-    return re.sub(r'[\\/*?:"<>|]', "-", name)
+            clean_title = _sanitize(f"{series_name} - S1E{ep_num:02d} - {ep_title}")
+            return {
+                "clean_title": clean_title,
+                "series_name": _sanitize(series_name),
+                "season": 1,
+                "episode": ep_num,
+            }
+    clean_title = _sanitize(name)
+    return {
+        "clean_title": clean_title,
+        "series_name": _sanitize(name),
+        "season": 1,
+        "episode": None,
+    }
+
+
+def format_episode_name(raw_title):
+    return parse_episode_title(raw_title)["clean_title"]
+
+
+def build_output_path(clean_title, series_name, season, ext, organize):
+    """Return the output path for an artifact.
+
+    When *organize* is True, files are placed in
+    ``<series_name>/Season <season>/<clean_title>.<ext>`` and the directories
+    are created.  Otherwise a flat ``<clean_title>.<ext>`` is returned.
+    """
+    filename = f"{clean_title}.{ext}"
+    if organize:
+        folder = os.path.join(series_name, f"Season {season}")
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, filename)
+    return filename
 
 
 def get_html(url):
@@ -75,14 +114,23 @@ def _srt_to_text(srt_content):
     return "\n".join(lines)
 
 
-def _download_subtitles(data, clean_title, subtitle_format="srt"):
+def _download_subtitles(data, clean_title, subtitle_format="srt", base_path=None):
+    """Download subtitles and produce .srt and/or .txt files.
+
+    *base_path* is the artifact path stem (without extension); when omitted it
+    defaults to ``clean_title`` in the current directory.  Always produces a
+    ``.cs.srt`` (needed for embedding); the ``.cs.txt`` companion is written
+    when *subtitle_format* is ``txt`` or ``both``.  Returns the ``.cs.srt``
+    path (or ``None`` if no subtitles were found).
+    """
     sub_match = re.search(r'"(https://[^"]+\.vtt[^"]*)"', data)
     if not sub_match:
         return None
 
+    stem = base_path if base_path is not None else clean_title
     sub_url = sub_match.group(1).replace("\\/", "/")
-    vtt_filename = f"{clean_title}.cs.vtt"
-    srt_filename = f"{clean_title}.cs.srt"
+    vtt_filename = f"{stem}.cs.vtt"
+    srt_filename = f"{stem}.cs.srt"
     try:
         urllib.request.urlretrieve(sub_url, vtt_filename)
         subprocess.run(
@@ -95,22 +143,25 @@ def _download_subtitles(data, clean_title, subtitle_format="srt"):
             os.remove(vtt_filename)
             print(f"[+] Generated standard subtitle file: {srt_filename}")
             if subtitle_format in ("txt", "both"):
-                txt_filename = f"{clean_title}.cs.txt"
+                txt_filename = f"{stem}.cs.txt"
                 with open(srt_filename, encoding="utf-8") as subtitle_file:
                     subtitle_text = _srt_to_text(subtitle_file.read())
                 with open(txt_filename, "w", encoding="utf-8") as subtitle_file:
                     subtitle_file.write(subtitle_text + "\n")
                 print(f"[+] Also saved as plain-text subtitle file: {txt_filename}")
-                if subtitle_format == "txt":
-                    os.remove(srt_filename)
-                    return txt_filename
             return srt_filename
     except (OSError, subprocess.SubprocessError):
         print("[-] Could not download or convert subtitles.")
     return None
 
 
-def download_episode(episode_url, quality=None, download_mode="video", subtitle_format="srt"):
+def download_episode(
+    episode_url,
+    quality=None,
+    download_mode="video",
+    subtitle_format="srt",
+    organize=False,
+):
     print(f"\nAnalyzing: {episode_url}")
 
     id_match = re.search(r"/(\d{10,})/?$", episode_url)
@@ -122,11 +173,24 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
     html = get_html(episode_url)
     title_match = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE)
 
-    clean_title = (
-        format_episode_name(title_match.group(1)) if title_match else f"CeskaTelevize_{video_id}"
-    )
+    if title_match:
+        meta = parse_episode_title(title_match.group(1))
+    else:
+        fallback = f"CeskaTelevize_{video_id}"
+        meta = {
+            "clean_title": fallback,
+            "series_name": fallback,
+            "season": 1,
+            "episode": None,
+        }
+    clean_title = meta["clean_title"]
+    series_name = meta["series_name"]
+    season = meta["season"]
 
-    output_filename = f"{clean_title}.mp4"
+    def artifact(ext):
+        return build_output_path(clean_title, series_name, season, ext, organize)
+
+    output_filename = artifact("mp4")
 
     if download_mode == "video" and os.path.exists(output_filename):
         print(f"[!] '{output_filename}' already exists. Skipping...")
@@ -141,7 +205,7 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
         poster_match = re.search(r'<meta\s+property="og:image"\s+content="([^"]+)"', html)
         if poster_match:
             poster_url = poster_match.group(1).replace("&amp;", "&")
-            poster_filename = f"{clean_title}.jpg"
+            poster_filename = artifact("jpg")
             if not os.path.exists(poster_filename):
                 try:
                     urllib.request.urlretrieve(poster_url, poster_filename)
@@ -157,20 +221,36 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
 
+    # The subtitle path stem shares the episode's output location.
+    if organize:
+        _folder = os.path.join(series_name, f"Season {season}")
+        os.makedirs(_folder, exist_ok=True)
+        subtitle_stem = os.path.join(_folder, clean_title)
+    else:
+        subtitle_stem = clean_title
+
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             data = response.read().decode("utf-8")
 
-            srt_filename = _download_subtitles(
-                data,
-                clean_title,
-                subtitle_format if download_mode == "subtitles" else "srt",
-            )
-            has_subs = srt_filename is not None
             if download_mode == "subtitles":
+                srt_filename = _download_subtitles(
+                    data, clean_title, subtitle_format, base_path=subtitle_stem
+                )
+                has_subs = srt_filename is not None
                 if not has_subs:
                     print("[-] Subtitles not found for this episode.")
+                elif subtitle_format == "txt" and os.path.exists(srt_filename):
+                    # txt-only: keep only the .txt on disk.
+                    os.remove(srt_filename)
                 return
+
+            # Video mode: always produce the .srt for embedding; the txt/both
+            # companion is written too when requested.
+            srt_filename = _download_subtitles(
+                data, clean_title, subtitle_format, base_path=subtitle_stem
+            )
+            has_subs = srt_filename is not None
 
             stream_match = re.search(r'"(https://[^"]+(?:token=[^"]+|m3u8|mpd[^"]*))"', data)
             if not stream_match:
@@ -200,7 +280,7 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
             # --- SUBTITLE EMBEDDING ---
             if has_subs and os.path.exists(output_filename):
                 print("[+] Embedding subtitles directly into the MP4 file...")
-                temp_video = f"{clean_title}.temp.mp4"
+                temp_video = artifact("temp.mp4")
                 os.rename(output_filename, temp_video)
 
                 ffmpeg_cmd = [
@@ -229,10 +309,15 @@ def download_episode(episode_url, quality=None, download_mode="video", subtitle_
                 )
                 if result.returncode == 0 and os.path.exists(output_filename):
                     os.remove(temp_video)
-                    print("[+] Subtitles successfully embedded! (External .srt file kept)")
+                    print("[+] Subtitles successfully embedded!")
                 else:
                     os.rename(temp_video, output_filename)
                     print("[-] Failed to embed subtitles. Kept original video.")
+
+                # Honor external-file retention after embedding.
+                if subtitle_format == "txt" and os.path.exists(srt_filename):
+                    os.remove(srt_filename)
+                    print("[+] Kept external .txt subtitle only.")
 
     except (OSError, UnicodeDecodeError) as error:
         print(f"[-] Connection error getting stream: {error}")
@@ -264,7 +349,11 @@ def build_arg_parser():
     """Build the CLI argument parser for ct_downloader."""
     parser = argparse.ArgumentParser(description="Ceska televize Downloader")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("url", nargs="?", help="The iVysílání Episode or Series URL")
+    parser.add_argument(
+        "urls",
+        nargs="*",
+        help="One or more iVysilani Episode or Series URLs",
+    )
     parser.add_argument(
         "-q",
         "--quality",
@@ -293,31 +382,29 @@ def build_arg_parser():
             " or both/srt,txt (keep .srt and also save .txt)"
         ),
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        "--output-dir",
+        dest="output_dir",
+        type=str,
+        help="Destination directory for downloaded files",
+    )
+    parser.add_argument(
+        "--series-folders",
+        action="store_true",
+        help="Organize files into <Series>/Season 1/ subfolders",
+    )
     return parser
 
 
-def main():
-    parser = build_arg_parser()
-    args = parser.parse_args()
-
-    if args.url:
-        url = args.url.strip()
-        quality = args.quality.lower().replace("p", "") if args.quality else None
-    else:
-        print("=== Česká televize Downloader ===")
-        url = input("Paste the iVysílání URL (Episode or Series): ").strip()
-        quality = input("Max resolution (e.g. 1080, 720, 540) [Press Enter for Highest]: ").strip()
-        quality = quality.lower().replace("p", "") if quality else None
-
+def process_url(url, quality, mode, subtitle_format, organize):
+    """Dispatch a single URL to episode or series download."""
     episode_match = re.search(r"/porady/\d+-[^/]+/(\d{10,})/?$", url)
     series_match = re.search(r"(/porady/\d+-[^/]+)/?$", url)
 
     if episode_match:
-        if args.mode == "video":
-            download_episode(url, quality)
-        else:
-            download_episode(url, quality, args.mode, args.subtitle_format)
-
+        download_episode(url, quality, mode, subtitle_format, organize)
     elif series_match:
         print("[+] Series URL detected. Searching for episodes...")
         series_path = series_match.group(1)
@@ -333,15 +420,34 @@ def main():
 
         for vid_id in unique_ids:
             ep_url = f"{SITE_URL}{series_path}/{vid_id}/"
-            if args.mode == "video":
-                download_episode(ep_url, quality)
-            else:
-                download_episode(ep_url, quality, args.mode, args.subtitle_format)
+            download_episode(ep_url, quality, mode, subtitle_format, organize)
             print("-" * 60)
 
         print("\n[+] Batch download complete!")
     else:
-        print("[-] Invalid Česká televize URL format.")
+        print("[-] Invalid Ceska televize URL format.")
+
+
+def main():
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    if args.urls:
+        urls = [u.strip() for u in args.urls if u.strip()]
+        quality = args.quality.lower().replace("p", "") if args.quality else None
+    else:
+        print("=== Ceska televize Downloader ===")
+        url = input("Paste the iVysilani URL (Episode or Series): ").strip()
+        urls = [url] if url else []
+        quality = input("Max resolution (e.g. 1080, 720, 540) [Press Enter for Highest]: ").strip()
+        quality = quality.lower().replace("p", "") if quality else None
+
+    if args.output_dir:
+        os.makedirs(args.output_dir, exist_ok=True)
+        os.chdir(args.output_dir)
+
+    for url in urls:
+        process_url(url, quality, args.mode, args.subtitle_format, args.series_folders)
 
 
 if __name__ == "__main__":

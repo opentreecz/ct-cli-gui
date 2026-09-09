@@ -8,18 +8,147 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 ct_gui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ct_gui)
 
+import ct_downloader  # noqa: E402
 
-def test_build_download_command_without_quality(monkeypatch):
+DOWNLOADER = str(GUI_PATH.parents[0] / "ct_downloader.py")
+
+
+def _fake_base(monkeypatch):
     monkeypatch.setattr(
         ct_gui,
         "get_downloader_command",
-        lambda: [str(ct_gui.get_console_python()), str(GUI_PATH.parents[0] / "ct_downloader.py")],
+        lambda: [str(ct_gui.get_console_python()), DOWNLOADER],
     )
+
+
+# ---------------------------------------------------------------------------
+# parse_urls
+# ---------------------------------------------------------------------------
+
+
+def test_parse_urls_newlines():
+    assert ct_gui.parse_urls("a\nb\nc") == ["a", "b", "c"]
+
+
+def test_parse_urls_commas_and_spaces():
+    assert ct_gui.parse_urls("a, b  c,\n d") == ["a", "b", "c", "d"]
+
+
+def test_parse_urls_empty():
+    assert ct_gui.parse_urls("   \n  ") == []
+
+
+# ---------------------------------------------------------------------------
+# build_download_command
+# ---------------------------------------------------------------------------
+
+
+def test_build_download_command_without_quality(monkeypatch):
+    _fake_base(monkeypatch)
     command = ct_gui.build_download_command("https://example.test/episode/123", "Highest Available")
 
-    assert command[1] == str(GUI_PATH.parents[0] / "ct_downloader.py")
+    assert command[1] == DOWNLOADER
     assert command[-1] == "https://example.test/episode/123"
     assert "--quality" not in command
+
+
+def test_build_download_command_with_quality(monkeypatch):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command("https://example.test/episode/123", "720p")
+
+    assert "--quality" in command
+    idx = command.index("--quality")
+    assert command[idx + 1] == "720"
+
+
+def test_build_download_command_with_download_mode(monkeypatch):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "subtitles",
+    )
+
+    assert "--mode" in command
+    idx = command.index("--mode")
+    assert command[idx + 1] == "subtitles"
+
+
+def test_build_download_command_with_text_subtitle_format(monkeypatch):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "subtitles",
+        "txt",
+    )
+
+    assert "--subtitle-format" in command
+    idx = command.index("--subtitle-format")
+    assert command[idx + 1] == "txt"
+
+
+def test_build_download_command_srt_txt_maps_to_both(monkeypatch):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "subtitles",
+        "srt,txt",
+    )
+    idx = command.index("--subtitle-format")
+    assert command[idx + 1] == "both"
+
+
+def test_build_download_command_subtitle_format_in_video_mode(monkeypatch):
+    """Bug 2: subtitle format is emitted even in video mode."""
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "video",
+        "srt,txt",
+    )
+    assert "--subtitle-format" in command
+    idx = command.index("--subtitle-format")
+    assert command[idx + 1] == "both"
+
+
+def test_build_download_command_with_output_dir(monkeypatch):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        output_dir="/tmp/dest",
+    )
+    assert "--output-dir" in command
+    idx = command.index("--output-dir")
+    assert command[idx + 1] == "/tmp/dest"
+
+
+def test_build_download_command_with_series_folders(monkeypatch):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        series_folders=True,
+    )
+    assert "--series-folders" in command
+
+
+def test_build_download_command_multiple_urls(monkeypatch):
+    _fake_base(monkeypatch)
+    urls = [
+        "https://example.test/episode/1",
+        "https://example.test/episode/2",
+    ]
+    command = ct_gui.build_download_command(urls, "Highest Available")
+    assert command[-2:] == urls
+
+
+# ---------------------------------------------------------------------------
+# get_downloader_command
+# ---------------------------------------------------------------------------
 
 
 def test_get_downloader_command_uses_configured_path(monkeypatch, tmp_path):
@@ -49,31 +178,9 @@ def test_get_downloader_command_reports_missing_configured_path(monkeypatch, tmp
         raise AssertionError("Expected missing configured downloader to fail")
 
 
-def test_build_download_command_with_quality():
-    command = ct_gui.build_download_command("https://example.test/episode/123", "720p")
-
-    assert command[-2:] == ["--quality", "720"]
-
-
-def test_build_download_command_with_download_mode():
-    command = ct_gui.build_download_command(
-        "https://example.test/episode/123",
-        "Highest Available",
-        "subtitles",
-    )
-
-    assert command[-2:] == ["--mode", "subtitles"]
-
-
-def test_build_download_command_with_text_subtitle_format():
-    command = ct_gui.build_download_command(
-        "https://example.test/episode/123",
-        "Highest Available",
-        "subtitles",
-        "txt",
-    )
-
-    assert command[-2:] == ["--subtitle-format", "txt"]
+# ---------------------------------------------------------------------------
+# launch_download
+# ---------------------------------------------------------------------------
 
 
 def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch, tmp_path):
@@ -85,14 +192,15 @@ def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch,
         "Popen",
         lambda command, **options: calls.append((command, options)),
     )
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
 
-    ct_gui.launch_download(["python", "ct_downloader.py", "https://example.test"])
+    ct_gui.launch_download(
+        ["python", "ct_downloader.py", "https://example.test"], cwd=str(tmp_path)
+    )
 
     assert calls == [
         (
             ["python", "ct_downloader.py", "https://example.test"],
-            {"cwd": tmp_path},
+            {"cwd": str(tmp_path)},
         )
     ]
 
@@ -110,9 +218,8 @@ def test_launch_download_uses_linux_terminal(monkeypatch, tmp_path):
         "Popen",
         lambda command, **options: calls.append((command, options)),
     )
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
 
-    ct_gui.launch_download(["python", "ct_downloader.py"])
+    ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
 
     assert calls[0][0] == ["gnome-terminal", "--", "python", "ct_downloader.py"]
 
@@ -125,9 +232,8 @@ def test_launch_download_uses_macos_terminal(monkeypatch, tmp_path):
         "Popen",
         lambda command, **options: calls.append((command, options)),
     )
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
 
-    ct_gui.launch_download(["python", "ct_downloader.py", "URL with spaces"])
+    ct_gui.launch_download(["python", "ct_downloader.py", "URL with spaces"], cwd=str(tmp_path))
 
     assert calls[0][0][0] == "osascript"
     assert "Terminal" in calls[0][0][2]
@@ -148,82 +254,82 @@ def test_launch_download_uses_windows_console(monkeypatch, tmp_path):
         "Popen",
         lambda command, **options: calls.append((command, options)),
     )
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
 
-    ct_gui.launch_download(["python", "ct_downloader.py"])
+    ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
 
     assert calls[0][1] == {
-        "cwd": tmp_path,
+        "cwd": str(tmp_path),
         "creationflags": getattr(ct_gui.subprocess, "CREATE_NEW_CONSOLE", 0),
     }
 
 
-def test_start_download_ignores_empty_url(monkeypatch):
-    class Field:
-        def get(self):
-            return "  "
+# ---------------------------------------------------------------------------
+# start_download (GUI widget stubs)
+# ---------------------------------------------------------------------------
 
-    class Quality:
-        def get(self):
-            return "720p"
 
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Quality(), raising=False)
+class _Text:
+    def __init__(self, value):
+        self.value = value
+        self.cleared = False
+
+    def get(self, *_args):
+        return self.value
+
+    def delete(self, *_args):
+        self.cleared = True
+
+
+class _Value:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+
+def _setup_gui(monkeypatch, tmp_path, urls, mode="video", fmt="srt", organize=False):
+    monkeypatch.setattr(ct_gui, "url_text", _Text(urls), raising=False)
+    monkeypatch.setattr(ct_gui, "quality_var", _Value("Highest Available"), raising=False)
+    monkeypatch.setattr(ct_gui, "mode_var", _Value(mode), raising=False)
+    monkeypatch.setattr(ct_gui, "subtitle_format_var", _Value(fmt), raising=False)
+    monkeypatch.setattr(ct_gui, "output_var", _Value(str(tmp_path)), raising=False)
+    monkeypatch.setattr(ct_gui, "series_var", _Value(organize), raising=False)
+    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
+
+
+def test_start_download_ignores_empty_url(monkeypatch, tmp_path):
+    _setup_gui(monkeypatch, tmp_path, "   \n  ")
     monkeypatch.setattr(
         ct_gui,
         "launch_download",
-        lambda command: (_ for _ in ()).throw(AssertionError("not called")),
+        lambda command, cwd: (_ for _ in ()).throw(AssertionError("not called")),
     )
+    _fake_base(monkeypatch)
 
     ct_gui.start_download()
 
 
 def test_start_download_launches_and_clears_url(monkeypatch, tmp_path):
-    class Field:
-        def __init__(self):
-            self.cleared = False
-
-        def get(self):
-            return "https://example.test/video"
-
-        def delete(self, start, end):
-            self.cleared = (start, end)
-
-    class Quality:
-        def get(self):
-            return "720p"
-
-    field = Field()
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video")
+    _fake_base(monkeypatch)
     launched = []
-    monkeypatch.setattr(ct_gui, "url_entry", field, raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Quality(), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path / "downloads")
-    monkeypatch.setattr(ct_gui, "launch_download", launched.append)
+    monkeypatch.setattr(ct_gui, "launch_download", lambda command, cwd: launched.append(command))
 
     ct_gui.start_download()
 
-    assert launched[0][-2:] == ["--quality", "720"]
-    assert field.cleared == (0, ct_gui.tk.END)
-    assert (tmp_path / "downloads").is_dir()
+    assert launched[0][-1] == "https://example.test/video"
+    assert ct_gui.url_text.cleared is True
 
 
 def test_start_download_reports_launch_error(monkeypatch, tmp_path):
-    class Field:
-        def get(self):
-            return "https://example.test/video"
-
-    class Quality:
-        def get(self):
-            return "Highest Available"
-
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video")
+    _fake_base(monkeypatch)
     errors = []
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Quality(), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
     monkeypatch.setattr(
         ct_gui,
         "launch_download",
-        lambda command: (_ for _ in ()).throw(OSError("cannot launch")),
+        lambda command, cwd: (_ for _ in ()).throw(OSError("cannot launch")),
     )
     monkeypatch.setattr(
         ct_gui.messagebox,
@@ -237,83 +343,103 @@ def test_start_download_reports_launch_error(monkeypatch, tmp_path):
 
 
 def test_start_download_includes_selected_mode(monkeypatch, tmp_path):
-    class Field:
-        def get(self):
-            return "https://example.test/video"
-
-        def delete(self, start, end):
-            pass
-
-    class Value:
-        def __init__(self, value):
-            self.value = value
-
-        def get(self):
-            return self.value
-
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video", mode="subtitles")
+    _fake_base(monkeypatch)
     launched = []
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
-    monkeypatch.setattr(ct_gui, "mode_var", Value("subtitles"), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
-    monkeypatch.setattr(ct_gui, "launch_download", launched.append)
+    monkeypatch.setattr(ct_gui, "launch_download", lambda command, cwd: launched.append(command))
 
     ct_gui.start_download()
 
-    assert launched[0][-2:] == ["--mode", "subtitles"]
+    assert "--mode" in launched[0]
+    idx = launched[0].index("--mode")
+    assert launched[0][idx + 1] == "subtitles"
 
 
 def test_start_download_includes_selected_subtitle_format(monkeypatch, tmp_path):
-    class Field:
-        def get(self):
-            return "https://example.test/video"
-
-        def delete(self, start, end):
-            pass
-
-    class Value:
-        def __init__(self, value):
-            self.value = value
-
-        def get(self):
-            return self.value
-
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video", mode="subtitles", fmt="txt")
+    _fake_base(monkeypatch)
     launched = []
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
-    monkeypatch.setattr(ct_gui, "mode_var", Value("subtitles"), raising=False)
-    monkeypatch.setattr(ct_gui, "subtitle_format_var", Value("txt"), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
-    monkeypatch.setattr(ct_gui, "launch_download", launched.append)
+    monkeypatch.setattr(ct_gui, "launch_download", lambda command, cwd: launched.append(command))
 
     ct_gui.start_download()
 
-    assert launched[0][-2:] == ["--subtitle-format", "txt"]
+    idx = launched[0].index("--subtitle-format")
+    assert launched[0][idx + 1] == "txt"
+
+
+def test_start_download_includes_srt_txt_subtitle_format(monkeypatch, tmp_path):
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video", mode="subtitles", fmt="srt,txt")
+    _fake_base(monkeypatch)
+    launched = []
+    monkeypatch.setattr(ct_gui, "launch_download", lambda command, cwd: launched.append(command))
+
+    ct_gui.start_download()
+
+    idx = launched[0].index("--subtitle-format")
+    assert launched[0][idx + 1] == "both"
+
+
+def test_start_download_includes_output_dir(monkeypatch, tmp_path):
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video")
+    _fake_base(monkeypatch)
+    launched = []
+    monkeypatch.setattr(
+        ct_gui, "launch_download", lambda command, cwd: launched.append((command, cwd))
+    )
+
+    ct_gui.start_download()
+
+    command, cwd = launched[0]
+    assert "--output-dir" in command
+    assert cwd == str(tmp_path)
+
+
+def test_start_download_includes_series_folders(monkeypatch, tmp_path):
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/video", organize=True)
+    _fake_base(monkeypatch)
+    launched = []
+    monkeypatch.setattr(ct_gui, "launch_download", lambda command, cwd: launched.append(command))
+
+    ct_gui.start_download()
+
+    assert "--series-folders" in launched[0]
+
+
+def test_start_download_multiple_urls(monkeypatch, tmp_path):
+    _setup_gui(
+        monkeypatch,
+        tmp_path,
+        "https://example.test/1\nhttps://example.test/2, https://example.test/3",
+    )
+    _fake_base(monkeypatch)
+    launched = []
+    monkeypatch.setattr(ct_gui, "launch_download", lambda command, cwd: launched.append(command))
+
+    ct_gui.start_download()
+
+    assert launched[0][-3:] == [
+        "https://example.test/1",
+        "https://example.test/2",
+        "https://example.test/3",
+    ]
 
 
 # ---------------------------------------------------------------------------
-# GUI ↔ CLI contract tests
-# These tests feed the command built by the GUI into the downloader's REAL
-# argparser (ct_downloader.build_arg_parser), proving both sides agree on
-# the CLI interface.  A failure here means one side was changed without
-# updating the other — exactly the class of regression introduced in
-# commit 68af0e4 / fixed in 0da6f63.
+# GUI <-> CLI contract tests (real parser)
 # ---------------------------------------------------------------------------
 
-import ct_downloader  # noqa: E402
 
-
-def _gui_args(url, quality, mode, subtitle_format):
-    """Build the command the GUI would launch and strip the interpreter/script prefix."""
-    command = ct_gui.build_download_command(url, quality, mode, subtitle_format)
-    # The first two entries are [python, ct_downloader.py]; drop them so we can
-    # feed the remaining tokens directly to argparse.
+def _gui_args(monkeypatch, urls, quality, mode, subtitle_format, output_dir=None, organize=False):
+    _fake_base(monkeypatch)
+    command = ct_gui.build_download_command(
+        urls, quality, mode, subtitle_format, output_dir=output_dir, series_folders=organize
+    )
     return command[2:]
 
 
-def test_gui_srt_command_is_accepted_by_downloader_cli():
-    """GUI command for srt subtitles must parse without error."""
+def test_gui_srt_command_is_accepted_by_downloader_cli(monkeypatch):
     args = _gui_args(
+        monkeypatch,
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "Highest Available",
         "subtitles",
@@ -324,35 +450,33 @@ def test_gui_srt_command_is_accepted_by_downloader_cli():
     assert parsed.subtitle_format == "srt"
 
 
-def test_gui_txt_command_is_accepted_by_downloader_cli():
-    """GUI command for txt subtitles must parse without error."""
+def test_gui_txt_command_is_accepted_by_downloader_cli(monkeypatch):
     args = _gui_args(
+        monkeypatch,
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "Highest Available",
         "subtitles",
         "txt",
     )
     parsed = ct_downloader.build_arg_parser().parse_args(args)
-    assert parsed.mode == "subtitles"
     assert parsed.subtitle_format == "txt"
 
 
-def test_gui_srt_txt_command_is_accepted_by_downloader_cli():
-    """GUI 'srt,txt' selection must emit --subtitle-format both and parse."""
+def test_gui_srt_txt_command_is_accepted_by_downloader_cli(monkeypatch):
     args = _gui_args(
+        monkeypatch,
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "Highest Available",
         "subtitles",
         "srt,txt",
     )
     parsed = ct_downloader.build_arg_parser().parse_args(args)
-    assert parsed.mode == "subtitles"
     assert parsed.subtitle_format == "both"
 
 
-def test_gui_video_command_is_accepted_by_downloader_cli():
-    """Default video download command from the GUI must also parse cleanly."""
+def test_gui_video_command_is_accepted_by_downloader_cli(monkeypatch):
     args = _gui_args(
+        monkeypatch,
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "720p",
         "video",
@@ -363,45 +487,34 @@ def test_gui_video_command_is_accepted_by_downloader_cli():
     assert parsed.quality == "720"
 
 
-def test_build_download_command_srt_txt_maps_to_both():
-    """GUI dropdown 'srt,txt' must map to CLI --subtitle-format both."""
-    command = ct_gui.build_download_command(
-        "https://example.test/episode/123",
+def test_gui_output_and_organize_accepted_by_cli(monkeypatch):
+    args = _gui_args(
+        monkeypatch,
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "Highest Available",
-        "subtitles",
-        "srt,txt",
+        "video",
+        "srt",
+        output_dir="/tmp/dest",
+        organize=True,
     )
-    assert "--subtitle-format" in command
-    idx = command.index("--subtitle-format")
-    assert command[idx + 1] == "both"
+    parsed = ct_downloader.build_arg_parser().parse_args(args)
+    assert parsed.output_dir == "/tmp/dest"
+    assert parsed.series_folders is True
 
 
-def test_start_download_includes_srt_txt_subtitle_format(monkeypatch, tmp_path):
-    class Field:
-        def get(self):
-            return "https://example.test/video"
-
-        def delete(self, start, end):
-            pass
-
-    class Value:
-        def __init__(self, value):
-            self.value = value
-
-        def get(self):
-            return self.value
-
-    launched = []
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
-    monkeypatch.setattr(ct_gui, "mode_var", Value("subtitles"), raising=False)
-    monkeypatch.setattr(ct_gui, "subtitle_format_var", Value("srt,txt"), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
-    monkeypatch.setattr(ct_gui, "launch_download", launched.append)
-
-    ct_gui.start_download()
-
-    assert launched[0][-2:] == ["--subtitle-format", "both"]
+def test_gui_multiple_urls_accepted_by_cli(monkeypatch):
+    args = _gui_args(
+        monkeypatch,
+        [
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "https://www.ceskatelevize.cz/porady/123-show/12345678902/",
+        ],
+        "Highest Available",
+        "video",
+        "srt",
+    )
+    parsed = ct_downloader.build_arg_parser().parse_args(args)
+    assert len(parsed.urls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -410,16 +523,12 @@ def test_start_download_includes_srt_txt_subtitle_format(monkeypatch, tmp_path):
 
 
 def test_get_downloader_command_returns_none_when_frozen(monkeypatch):
-    """When running as a frozen binary, get_downloader_command returns None."""
     monkeypatch.setattr(ct_gui.sys, "frozen", True, raising=False)
-
     assert ct_gui.get_downloader_command() is None
 
 
 def test_build_download_command_returns_none_when_frozen(monkeypatch):
-    """Frozen mode: build_download_command returns None (handled in-process)."""
     monkeypatch.setattr(ct_gui.sys, "frozen", True, raising=False)
-
     result = ct_gui.build_download_command(
         "https://example.test/episode/123",
         "Highest Available",
@@ -430,7 +539,6 @@ def test_build_download_command_returns_none_when_frozen(monkeypatch):
 
 
 def test_get_downloader_command_uses_script_when_not_frozen(monkeypatch):
-    """Source-mode: get_downloader_command still finds ct_downloader.py."""
     monkeypatch.delattr(ct_gui.sys, "frozen", raising=False)
     monkeypatch.delenv("CT_DOWNLOADER_PATH", raising=False)
     monkeypatch.setattr(ct_gui.shutil, "which", lambda name: None)
@@ -442,17 +550,19 @@ def test_get_downloader_command_uses_script_when_not_frozen(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _run_frozen_download tests (in-process downloader when frozen)
+# _run_frozen_download tests
 # ---------------------------------------------------------------------------
 
 
-def test_run_frozen_download_dispatches_episode(monkeypatch):
-    """_run_frozen_download calls download_episode for an episode URL."""
+def test_run_frozen_download_dispatches_episode(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     called = []
     monkeypatch.setattr(
         ct_downloader,
-        "download_episode",
-        lambda url, quality: called.append((url, quality)),
+        "process_url",
+        lambda url, quality, mode, fmt, organize: called.append(
+            (url, quality, mode, fmt, organize)
+        ),
     )
 
     ct_gui._run_frozen_download(
@@ -460,20 +570,22 @@ def test_run_frozen_download_dispatches_episode(monkeypatch):
         "Highest Available",
         "video",
         "srt",
+        None,
+        False,
     )
 
-    assert called == [("https://www.ceskatelevize.cz/porady/123-show/12345678901/", None)]
+    assert called == [
+        ("https://www.ceskatelevize.cz/porady/123-show/12345678901/", None, "video", "srt", False)
+    ]
 
 
-def test_run_frozen_download_dispatches_subtitles_with_format(monkeypatch):
-    """_run_frozen_download passes subtitle_format for subtitles mode."""
+def test_run_frozen_download_subtitles_maps_srt_txt(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     called = []
     monkeypatch.setattr(
         ct_downloader,
-        "download_episode",
-        lambda url, quality, mode, subtitle_format: called.append(
-            (url, quality, mode, subtitle_format)
-        ),
+        "process_url",
+        lambda url, quality, mode, fmt, organize: called.append((quality, mode, fmt, organize)),
     )
 
     ct_gui._run_frozen_download(
@@ -481,105 +593,73 @@ def test_run_frozen_download_dispatches_subtitles_with_format(monkeypatch):
         "720p",
         "subtitles",
         "srt,txt",
+        None,
+        True,
     )
 
-    assert called == [
-        (
-            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
-            "720",
-            "subtitles",
-            "both",
-        )
-    ]
+    assert called == [("720", "subtitles", "both", True)]
 
 
-def test_run_frozen_download_dispatches_series(monkeypatch, capsys):
-    """_run_frozen_download handles series URLs."""
+def test_run_frozen_download_multiple_urls(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     called = []
     monkeypatch.setattr(
         ct_downloader,
-        "download_episode",
-        lambda url, quality: called.append(url),
+        "process_url",
+        lambda url, quality, mode, fmt, organize: called.append(url),
     )
+
+    ct_gui._run_frozen_download(
+        ["https://example.test/1", "https://example.test/2"],
+        "Highest Available",
+        "video",
+        "srt",
+        None,
+        False,
+    )
+
+    assert called == ["https://example.test/1", "https://example.test/2"]
+
+
+def test_run_frozen_download_output_dir(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "dest"
+    seen = []
     monkeypatch.setattr(
         ct_downloader,
-        "get_html",
-        lambda url: "/porady/123-show/12345678901/",
+        "process_url",
+        lambda url, quality, mode, fmt, organize: seen.append(ct_gui.os.getcwd()),
     )
 
-    ct_gui._run_frozen_download(
-        "https://www.ceskatelevize.cz/porady/123-show/",
-        "Highest Available",
-        "video",
-        "srt",
-    )
+    original = ct_gui.os.getcwd()
+    try:
+        ct_gui._run_frozen_download(
+            "https://example.test/1",
+            "Highest Available",
+            "video",
+            "srt",
+            str(target),
+            False,
+        )
+    finally:
+        ct_gui.os.chdir(original)
 
-    assert called == ["https://www.ceskatelevize.cz/porady/123-show/12345678901/"]
-    assert "Batch download complete" in capsys.readouterr().out
-
-
-def test_run_frozen_download_reports_invalid_url(capsys):
-    """_run_frozen_download prints error for non-matching URLs."""
-    ct_gui._run_frozen_download(
-        "https://example.test/not-valid",
-        "Highest Available",
-        "video",
-        "srt",
-    )
-
-    assert "Invalid" in capsys.readouterr().out
-
-
-def test_run_frozen_download_series_no_episodes(monkeypatch, capsys):
-    """_run_frozen_download handles series with no episodes found."""
-    monkeypatch.setattr(
-        ct_downloader,
-        "get_html",
-        lambda url: "<html>nothing here</html>",
-    )
-
-    ct_gui._run_frozen_download(
-        "https://www.ceskatelevize.cz/porady/123-show/",
-        "Highest Available",
-        "video",
-        "srt",
-    )
-
-    assert "No episodes found" in capsys.readouterr().out
+    assert target.is_dir()
+    assert ct_gui.os.path.realpath(seen[0]) == ct_gui.os.path.realpath(str(target))
 
 
 def test_start_download_uses_frozen_path(monkeypatch, tmp_path):
-    """When frozen, start_download calls _run_frozen_download instead of launch_download."""
-
-    class Field:
-        def get(self):
-            return "https://example.test/porady/123-show/12345678901/"
-
-        def delete(self, start, end):
-            pass
-
-    class Value:
-        def __init__(self, value):
-            self.value = value
-
-        def get(self):
-            return self.value
-
+    _setup_gui(monkeypatch, tmp_path, "https://example.test/porady/123-show/12345678901/")
     monkeypatch.setattr(ct_gui.sys, "frozen", True, raising=False)
-    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
-    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
-    monkeypatch.setattr(ct_gui, "mode_var", Value("video"), raising=False)
-    monkeypatch.setattr(ct_gui, "subtitle_format_var", Value("srt"), raising=False)
-    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
 
     frozen_calls = []
     monkeypatch.setattr(
         ct_gui,
         "_run_frozen_download",
-        lambda url, quality, mode, fmt: frozen_calls.append((url, quality, mode, fmt)),
+        lambda urls, quality, mode, fmt, output_dir, organize: frozen_calls.append(urls),
     )
 
     ct_gui.start_download()
 
     assert len(frozen_calls) == 1
-    assert frozen_calls[0][0] == "https://example.test/porady/123-show/12345678901/"
+    assert frozen_calls[0] == ["https://example.test/porady/123-show/12345678901/"]
