@@ -439,3 +439,147 @@ def test_get_downloader_command_uses_script_when_not_frozen(monkeypatch):
     command = ct_gui.get_downloader_command()
     assert command is not None
     assert "ct_downloader.py" in command[-1]
+
+
+# ---------------------------------------------------------------------------
+# _run_frozen_download tests (in-process downloader when frozen)
+# ---------------------------------------------------------------------------
+
+
+def test_run_frozen_download_dispatches_episode(monkeypatch):
+    """_run_frozen_download calls download_episode for an episode URL."""
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality: called.append((url, quality)),
+    )
+
+    ct_gui._run_frozen_download(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "Highest Available",
+        "video",
+        "srt",
+    )
+
+    assert called == [("https://www.ceskatelevize.cz/porady/123-show/12345678901/", None)]
+
+
+def test_run_frozen_download_dispatches_subtitles_with_format(monkeypatch):
+    """_run_frozen_download passes subtitle_format for subtitles mode."""
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format: called.append(
+            (url, quality, mode, subtitle_format)
+        ),
+    )
+
+    ct_gui._run_frozen_download(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "720p",
+        "subtitles",
+        "srt,txt",
+    )
+
+    assert called == [
+        (
+            "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+            "720",
+            "subtitles",
+            "both",
+        )
+    ]
+
+
+def test_run_frozen_download_dispatches_series(monkeypatch, capsys):
+    """_run_frozen_download handles series URLs."""
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality: called.append(url),
+    )
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "/porady/123-show/12345678901/",
+    )
+
+    ct_gui._run_frozen_download(
+        "https://www.ceskatelevize.cz/porady/123-show/",
+        "Highest Available",
+        "video",
+        "srt",
+    )
+
+    assert called == ["https://www.ceskatelevize.cz/porady/123-show/12345678901/"]
+    assert "Batch download complete" in capsys.readouterr().out
+
+
+def test_run_frozen_download_reports_invalid_url(capsys):
+    """_run_frozen_download prints error for non-matching URLs."""
+    ct_gui._run_frozen_download(
+        "https://example.test/not-valid",
+        "Highest Available",
+        "video",
+        "srt",
+    )
+
+    assert "Invalid" in capsys.readouterr().out
+
+
+def test_run_frozen_download_series_no_episodes(monkeypatch, capsys):
+    """_run_frozen_download handles series with no episodes found."""
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: "<html>nothing here</html>",
+    )
+
+    ct_gui._run_frozen_download(
+        "https://www.ceskatelevize.cz/porady/123-show/",
+        "Highest Available",
+        "video",
+        "srt",
+    )
+
+    assert "No episodes found" in capsys.readouterr().out
+
+
+def test_start_download_uses_frozen_path(monkeypatch, tmp_path):
+    """When frozen, start_download calls _run_frozen_download instead of launch_download."""
+
+    class Field:
+        def get(self):
+            return "https://example.test/porady/123-show/12345678901/"
+
+        def delete(self, start, end):
+            pass
+
+    class Value:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+    monkeypatch.setattr(ct_gui.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
+    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
+    monkeypatch.setattr(ct_gui, "mode_var", Value("video"), raising=False)
+    monkeypatch.setattr(ct_gui, "subtitle_format_var", Value("srt"), raising=False)
+    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
+
+    frozen_calls = []
+    monkeypatch.setattr(
+        ct_gui,
+        "_run_frozen_download",
+        lambda url, quality, mode, fmt: frozen_calls.append((url, quality, mode, fmt)),
+    )
+
+    ct_gui.start_download()
+
+    assert len(frozen_calls) == 1
+    assert frozen_calls[0][0] == "https://example.test/porady/123-show/12345678901/"

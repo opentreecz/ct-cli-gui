@@ -987,7 +987,18 @@ def test_resolve_tool_returns_which_path_when_not_frozen(monkeypatch):
 def test_resolve_tool_uses_meipass_when_frozen(monkeypatch, tmp_path):
     monkeypatch.setattr(ct_downloader.sys, "frozen", True, raising=False)
     monkeypatch.setattr(ct_downloader.sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(ct_downloader.sys, "platform", "linux")
     bundled = tmp_path / "ffmpeg"
+    bundled.write_text("binary")
+
+    assert ct_downloader._resolve_tool("ffmpeg") == str(bundled)
+
+
+def test_resolve_tool_uses_meipass_with_exe_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(ct_downloader.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(ct_downloader.sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(ct_downloader.sys, "platform", "win32")
+    bundled = tmp_path / "ffmpeg.exe"
     bundled.write_text("binary")
 
     assert ct_downloader._resolve_tool("ffmpeg") == str(bundled)
