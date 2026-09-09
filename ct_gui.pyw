@@ -1,14 +1,12 @@
-import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox
-import os
 import json
-from pathlib import Path
+import os
 import shlex
 import shutil
 import subprocess
 import sys
-
+import tkinter as tk
+from pathlib import Path
+from tkinter import messagebox, ttk
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DOWNLOADER_SCRIPT = SCRIPT_DIR / "ct_downloader.py"
@@ -56,8 +54,10 @@ def launch_download(command):
     subprocess.Popen(command, **options)
 
 
-def build_download_command(url, selected_quality):
+def build_download_command(url, selected_quality, download_mode="video"):
     command = [str(get_console_python()), str(DOWNLOADER_SCRIPT), url]
+    if download_mode != "video":
+        command.extend(["--mode", download_mode])
     if selected_quality != "Highest Available":
         command.extend(["--quality", selected_quality.replace("p", "")])
     return command
@@ -66,9 +66,10 @@ def build_download_command(url, selected_quality):
 def start_download():
     url = url_entry.get().strip()
     selected_quality = quality_var.get()
+    selected_mode = mode_var.get() if "mode_var" in globals() else "video"
     
     if url:
-        command = build_download_command(url, selected_quality)
+        command = build_download_command(url, selected_quality, selected_mode)
         
         try:
             DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,7 +81,7 @@ def start_download():
         url_entry.delete(0, tk.END)
 
 def main():
-    global quality_var, url_entry
+    global quality_var, url_entry, mode_var
 
     root = tk.Tk()
     root.title("ČT Downloader")
@@ -104,9 +105,20 @@ def main():
     quality_dropdown["values"] = ("Highest Available", "1080p", "720p", "540p", "360p")
     quality_dropdown.pack(pady=(0, 10))
 
+    mode_var = tk.StringVar(value="video")
+    mode_dropdown = ttk.Combobox(
+        root,
+        textvariable=mode_var,
+        state="readonly",
+        font=("Segoe UI", 9),
+        width=18,
+    )
+    mode_dropdown["values"] = ("video", "subtitles", "transcript")
+    mode_dropdown.pack(pady=(0, 10))
+
     tk.Button(
         root,
-        text="Download Video",
+        text="Download",
         command=start_download,
         font=("Segoe UI", 10, "bold"),
         bg="#E2001A",

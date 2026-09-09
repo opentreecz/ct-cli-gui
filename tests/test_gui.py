@@ -23,6 +23,16 @@ def test_build_download_command_with_quality():
     assert command[-2:] == ["--quality", "720"]
 
 
+def test_build_download_command_with_download_mode():
+    command = ct_gui.build_download_command(
+        "https://example.test/episode/123",
+        "Highest Available",
+        "subtitles",
+    )
+
+    assert command[-2:] == ["--mode", "subtitles"]
+
+
 def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(ct_gui.sys, "platform", "linux")
@@ -181,3 +191,30 @@ def test_start_download_reports_launch_error(monkeypatch, tmp_path):
     ct_gui.start_download()
 
     assert errors == [("Unable to start download", "cannot launch")]
+
+
+def test_start_download_includes_selected_mode(monkeypatch, tmp_path):
+    class Field:
+        def get(self):
+            return "https://example.test/video"
+
+        def delete(self, start, end):
+            pass
+
+    class Value:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self):
+            return self.value
+
+    launched = []
+    monkeypatch.setattr(ct_gui, "url_entry", Field(), raising=False)
+    monkeypatch.setattr(ct_gui, "quality_var", Value("Highest Available"), raising=False)
+    monkeypatch.setattr(ct_gui, "mode_var", Value("transcript"), raising=False)
+    monkeypatch.setattr(ct_gui, "DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setattr(ct_gui, "launch_download", launched.append)
+
+    ct_gui.start_download()
+
+    assert launched[0][-2:] == ["--mode", "transcript"]
