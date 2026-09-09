@@ -14,6 +14,7 @@ This project bypasses recent site API changes (which break standard extractors) 
 * **Quality Selection:** Choose your maximum resolution limit (1080p, 720p, 540p, 360p) to save hard drive space.
 * **Subtitle and Transcript Downloads:** Download only the available subtitles without downloading the video. Subtitles can be saved as `.srt`, plain-text `.txt`, or both.
 * **Two Interfaces:** Includes a desktop GUI and command-line wrappers for Windows, Linux, and macOS.
+* **Standalone Binaries:** Self-contained executables for Linux, macOS, and Windows (AMD64 and ARM64) that bundle Python, yt-dlp, and ffmpeg — no installation required.
 
 ## 🛠️ Prerequisites
 
@@ -161,13 +162,62 @@ builds the wheel and source distribution and publishes them to PyPI using
 trusted publishing. Configure a PyPI project named `ct-cli-gui` and a
 repository publishing environment named `pypi` before the first release.
 
+## 🔧 Standalone binaries (no Python required)
+
+Self-contained executables that bundle Python, yt-dlp, and ffmpeg are available
+from the [GitHub Releases](../../releases) page. Download the binary for your
+platform and run it directly — no installation needed.
+
+| Platform | CLI binary | GUI binary |
+|---|---|---|
+| Linux AMD64 | `ct-dlp-linux-amd64` | `ct-gui-linux-amd64` |
+| Linux ARM64 | `ct-dlp-linux-arm64` | `ct-gui-linux-arm64` |
+| macOS Intel | `ct-dlp-macos-amd64` | `ct-gui-macos-amd64` |
+| macOS Apple Silicon | `ct-dlp-macos-arm64` | `ct-gui-macos-arm64` |
+| Windows AMD64 | `ct-dlp-windows-amd64.exe` | `ct-gui-windows-amd64.exe` |
+
+> **Note:** Binaries are unsigned and may trigger Gatekeeper (macOS) or
+> SmartScreen (Windows) warnings on first run. On macOS, right-click and
+> choose **Open** to bypass the warning. On Windows, click **More info** →
+> **Run anyway**.
+
 ## 💻 Usage
 
-### Option 1: The Desktop GUI
-Start `ct_gui.pyw` using the command for your operating system. Paste an episode or series URL from iVysílání, select a maximum quality and download type (`video` or `subtitles`), choose a subtitle format (`srt`, `txt`, or `srt,txt` for both), and click **Download**. The GUI launches the downloader in a new terminal where supported.
+There are three ways to use this project. All three are fully supported:
 
-### Option 2: The Command Line (CLI)
-Open a terminal in your target download folder and use the wrapper for your operating system:
+### Option 1: Run from source (local Python interpreter)
+
+Clone the repository, install runtime dependencies (`requirements.txt`), and
+ensure `yt-dlp` and `ffmpeg` are on your `PATH`:
+
+```sh
+python ct_gui.pyw            # Desktop GUI
+python ct_downloader.py URL  # CLI directly
+```
+
+Shell wrappers are provided for convenience:
+
+```sh
+./ct-dlp URL       # Linux/macOS — thin sh wrapper that calls python ct_downloader.py
+ct-dlp.bat URL     # Windows — thin batch wrapper
+```
+
+> **Note:** `ct-dlp` and `ct-dlp.bat` are shell launcher scripts, not Python
+> files. Invoke them directly (not via `python`).
+
+### Option 2: Install from PyPI
+
+```sh
+pip install ct-cli-gui
+ct-dlp URL
+```
+
+Provides the `ct-dlp` command. Requires `ffmpeg` on `PATH`.
+
+### Option 3: Standalone binaries
+
+Download from the [Releases](../../releases) page and run directly — no
+Python, yt-dlp, or ffmpeg installation required (all bundled).
 
 **Download a single episode:**
 ```text
@@ -231,23 +281,29 @@ compilation, and branch-coverage checks on Windows, Linux, and macOS.
 
 ## 📤 Publishing a release
 
-The `package.yml` workflow builds and smoke-tests the package whenever a
-version tag is pushed. To publish a new version:
+Releases are created **automatically** when the `version` field in
+`pyproject.toml` is updated and merged to `main`:
 
 1. Update `version` in `pyproject.toml`.
 2. Commit and merge the change into `main`.
-3. Configure a PyPI Trusted Publisher for this repository, using the `pypi`
-   environment and `.github/workflows/package.yml` workflow.
-4. Create and push a matching tag:
-   ```sh
-   git tag v1.0.1
-   git push origin v1.0.1
-   ```
-5. Install the published release:
-   ```sh
-   python -m pip install --upgrade ct-cli-gui
-   ct-dlp --help
-   ```
+3. The `auto-release.yml` workflow detects the new version, creates a git tag
+   (`v<version>`), and creates a GitHub Release with auto-generated notes.
+4. The tag push triggers:
+   - `binaries.yml` — builds self-contained CLI and GUI executables for
+     Linux, macOS, and Windows (AMD64 + ARM64) and attaches them to the
+     Release.
+   - `package.yml` — builds and publishes the Python package to PyPI via
+     Trusted Publishing.
+
+Dependabot keeps dependencies current. When a Dependabot PR passes CI it is
+auto-merged, the patch version is bumped, and the cycle above repeats — so
+updated binaries are released automatically whenever dependencies change.
+
+To install a published release:
+```sh
+python -m pip install --upgrade ct-cli-gui
+ct-dlp --version
+```
 
 The workflow publishes through PyPI Trusted Publishing and does not store a
 PyPI API token in the repository.

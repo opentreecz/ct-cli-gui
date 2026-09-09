@@ -176,6 +176,7 @@ def test_download_episode_reports_missing_stream(monkeypatch, tmp_path, capsys):
 
 def test_download_episode_passes_quality_to_ytdlp(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ct_downloader, "_resolve_tool", lambda name: name)
     monkeypatch.setattr(
         ct_downloader,
         "get_html",
@@ -221,6 +222,7 @@ def test_download_episode_passes_quality_to_ytdlp(monkeypatch, tmp_path):
 
 def test_download_episode_embeds_subtitles(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ct_downloader, "_resolve_tool", lambda name: name)
     monkeypatch.setattr(
         ct_downloader,
         "get_html",
@@ -511,6 +513,7 @@ def test_download_episode_restores_video_when_subtitle_embedding_fails(
     monkeypatch, tmp_path, capsys
 ):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ct_downloader, "_resolve_tool", lambda name: name)
     monkeypatch.setattr(
         ct_downloader,
         "get_html",
@@ -961,3 +964,91 @@ def test_main_rejects_transcript_mode(monkeypatch):
         ct_downloader.main()
 
     assert exc_info.value.code == 2
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tool: frozen vs. source-mode tool resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tool_returns_bare_name_when_not_frozen(monkeypatch):
+    """Source-mode: _resolve_tool returns which() result or bare name."""
+    monkeypatch.delattr(ct_downloader.sys, "frozen", raising=False)
+    monkeypatch.setattr(ct_downloader.shutil, "which", lambda name: None)
+
+    assert ct_downloader._resolve_tool("ffmpeg") == "ffmpeg"
+
+
+def test_resolve_tool_returns_which_path_when_not_frozen(monkeypatch):
+    monkeypatch.delattr(ct_downloader.sys, "frozen", raising=False)
+    monkeypatch.setattr(ct_downloader.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    assert ct_downloader._resolve_tool("ffmpeg") == "/usr/bin/ffmpeg"
+
+
+def test_resolve_tool_uses_meipass_when_frozen(monkeypatch, tmp_path):
+    monkeypatch.setattr(ct_downloader.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(ct_downloader.sys, "_MEIPASS", str(tmp_path), raising=False)
+    bundled = tmp_path / "ffmpeg"
+    bundled.write_text("binary")
+
+    assert ct_downloader._resolve_tool("ffmpeg") == str(bundled)
+
+
+def test_resolve_tool_falls_back_to_which_when_frozen_but_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(ct_downloader.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(ct_downloader.sys, "_MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(ct_downloader.shutil, "which", lambda name: "/usr/local/bin/ffmpeg")
+    # No bundled binary in tmp_path
+
+    assert ct_downloader._resolve_tool("ffmpeg") == "/usr/local/bin/ffmpeg"
+
+
+# ---------------------------------------------------------------------------
+# --version flag
+# ---------------------------------------------------------------------------
+
+
+def test_version_flag(monkeypatch, capsys):
+    import pytest
+
+    monkeypatch.setattr(
+        ct_downloader.sys,
+        "argv",
+        ["ct_downloader.py", "--version"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        ct_downloader.main()
+
+    assert exc_info.value.code == 0
+    assert ct_downloader.__version__ in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# main() interactive input fallback
+# ---------------------------------------------------------------------------
+
+
+def test_main_interactive_input(monkeypatch, capsys):
+    """When no URL argument is given, main() prompts via input()."""
+    inputs = iter([
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "720",
+    ])
+    monkeypatch.setattr(ct_downloader.sys, "argv", ["ct_downloader.py"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(inputs))
+
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality: called.append((url, quality)),
+    )
+
+    ct_downloader.main()
+
+    assert called == [(
+        "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
+        "720",
+    )]
