@@ -663,3 +663,126 @@ def test_start_download_uses_frozen_path(monkeypatch, tmp_path):
 
     assert len(frozen_calls) == 1
     assert frozen_calls[0] == ["https://example.test/porady/123-show/12345678901/"]
+
+
+# ---------------------------------------------------------------------------
+# _browse_output + _configure_style + main() UI construction (mocked Tk)
+# ---------------------------------------------------------------------------
+
+
+def test_browse_output_sets_folder(monkeypatch):
+    captured = {}
+
+    class _Var:
+        def get(self):
+            return ""
+
+        def set(self, value):
+            captured["value"] = value
+
+    monkeypatch.setattr(ct_gui, "output_var", _Var(), raising=False)
+    monkeypatch.setattr(ct_gui.filedialog, "askdirectory", lambda **k: "/chosen/dir")
+
+    ct_gui._browse_output()
+
+    assert captured["value"] == "/chosen/dir"
+
+
+def test_browse_output_cancelled_keeps_value(monkeypatch):
+    events = []
+
+    class _Var:
+        def get(self):
+            return "/existing"
+
+        def set(self, value):
+            events.append(value)
+
+    monkeypatch.setattr(ct_gui, "output_var", _Var(), raising=False)
+    monkeypatch.setattr(ct_gui.filedialog, "askdirectory", lambda **k: "")
+
+    ct_gui._browse_output()
+
+    assert events == []
+
+
+class _FakeWidget:
+    """A permissive stand-in for any tk/ttk widget."""
+
+    def __init__(self, *args, **kwargs):
+        self._values = {}
+
+    def __setitem__(self, key, value):
+        self._values[key] = value
+
+    def __getitem__(self, key):
+        return self._values.get(key)
+
+    def pack(self, *a, **k):
+        return self
+
+    def grid(self, *a, **k):
+        return self
+
+    def configure(self, *a, **k):
+        return self
+
+    config = configure
+
+    def columnconfigure(self, *a, **k):
+        return self
+
+    def rowconfigure(self, *a, **k):
+        return self
+
+    def bind(self, *a, **k):
+        return self
+
+    def title(self, *a, **k):
+        return self
+
+    def geometry(self, *a, **k):
+        return self
+
+    def minsize(self, *a, **k):
+        return self
+
+    def mainloop(self, *a, **k):
+        return self
+
+    def theme_names(self):
+        return ("clam", "default")
+
+    def theme_use(self, *a, **k):
+        return "clam"
+
+    def set(self, *a, **k):
+        return self
+
+    def map(self, *a, **k):
+        return self
+
+    def index(self, *a, **k):
+        return "1.0"
+
+    def yview(self, *a, **k):
+        return self
+
+
+def test_main_builds_ui(monkeypatch):
+    """Exercise main() UI construction with a fully mocked tkinter."""
+    monkeypatch.setattr(ct_gui.tk, "Tk", _FakeWidget)
+    monkeypatch.setattr(ct_gui.tk, "Text", _FakeWidget)
+    monkeypatch.setattr(ct_gui.tk, "Entry", _FakeWidget)
+    monkeypatch.setattr(ct_gui.tk, "StringVar", _FakeWidget)
+    monkeypatch.setattr(ct_gui.tk, "BooleanVar", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Frame", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Label", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Button", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Combobox", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Checkbutton", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Scrollbar", _FakeWidget)
+    monkeypatch.setattr(ct_gui.ttk, "Style", _FakeWidget)
+
+    # Should construct the whole UI and return once mainloop is a no-op.
+    ct_gui.main()
