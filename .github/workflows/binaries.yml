@@ -17,28 +17,18 @@ jobs:
         include:
           - os: ubuntu-22.04
             arch: amd64
-            ffmpeg_url: https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
-            ffmpeg_bin: ffmpeg
             artifact_suffix: linux-amd64
           - os: ubuntu-22.04-arm
             arch: arm64
-            ffmpeg_url: https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz
-            ffmpeg_bin: ffmpeg
             artifact_suffix: linux-arm64
           - os: macos-13
             arch: amd64
-            ffmpeg_url: https://evermeet.cx/ffmpeg/getrelease
-            ffmpeg_bin: ffmpeg
             artifact_suffix: macos-amd64
           - os: macos-14
             arch: arm64
-            ffmpeg_url: https://evermeet.cx/ffmpeg/getrelease
-            ffmpeg_bin: ffmpeg
             artifact_suffix: macos-arm64
           - os: windows-latest
             arch: amd64
-            ffmpeg_url: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
-            ffmpeg_bin: ffmpeg.exe
             artifact_suffix: windows-amd64
 
     runs-on: ${{ matrix.os }}
@@ -55,48 +45,68 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install --upgrade -r requirements-build.txt
 
-      - name: Download static ffmpeg (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: Download static ffmpeg (Linux AMD64)
+        if: matrix.os == 'ubuntu-22.04'
         run: |
-          curl -L "${{ matrix.ffmpeg_url }}" -o ffmpeg.tar.xz
+          curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o ffmpeg.tar.xz
           tar xf ffmpeg.tar.xz
           cp ffmpeg-*-static/ffmpeg .
           chmod +x ffmpeg
 
-      - name: Download static ffmpeg (macOS)
+      - name: Download static ffmpeg (Linux ARM64)
+        if: matrix.os == 'ubuntu-22.04-arm'
+        run: |
+          curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" -o ffmpeg.tar.xz
+          tar xf ffmpeg.tar.xz
+          cp ffmpeg-*-static/ffmpeg .
+          chmod +x ffmpeg
+
+      - name: Get ffmpeg via Homebrew (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          curl -L "${{ matrix.ffmpeg_url }}" -o ffmpeg.7z
-          7z x ffmpeg.7z -offmpeg_out || brew install ffmpeg && cp "$(which ffmpeg)" .
-          test -f ffmpeg_out/ffmpeg && cp ffmpeg_out/ffmpeg . || true
-          test -f ffmpeg && chmod +x ffmpeg || cp "$(which ffmpeg)" .
+          brew install --quiet ffmpeg
+          cp "$(which ffmpeg)" ./ffmpeg
           chmod +x ffmpeg
 
       - name: Download static ffmpeg (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "${{ matrix.ffmpeg_url }}" -OutFile ffmpeg.zip
+          $releases = Invoke-RestMethod "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
+          $asset = $releases.assets | Where-Object { $_.name -match "ffmpeg-master-latest-win64-gpl\.zip$" } | Select-Object -First 1
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_out
           $exe = Get-ChildItem -Recurse -Path ffmpeg_out -Filter ffmpeg.exe | Select-Object -First 1
           Copy-Item $exe.FullName -Destination ffmpeg.exe
 
+      - name: Set ffmpeg binary name
+        id: ffmpeg
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == windows-* ]]; then
+            echo "bin=ffmpeg.exe" >> "$GITHUB_OUTPUT"
+            echo "sep=;" >> "$GITHUB_OUTPUT"
+          else
+            echo "bin=ffmpeg" >> "$GITHUB_OUTPUT"
+            echo "sep=:" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build CLI binary
+        shell: bash
         run: >
           pyinstaller --onefile --name ct-dlp
           --collect-all yt_dlp
-          --add-binary "${{ matrix.ffmpeg_bin }}:."
-          --strip
+          --add-binary "${{ steps.ffmpeg.outputs.bin }}${{ steps.ffmpeg.outputs.sep }}."
           ct_downloader.py
 
       - name: Build GUI binary
+        shell: bash
         run: >
           pyinstaller --onefile --windowed --name ct-gui
           --collect-all yt_dlp
           --hidden-import ct_downloader
-          --add-data "ct_downloader.py:."
-          --add-binary "${{ matrix.ffmpeg_bin }}:."
-          --strip
+          --add-data "ct_downloader.py${{ steps.ffmpeg.outputs.sep }}."
+          --add-binary "${{ steps.ffmpeg.outputs.bin }}${{ steps.ffmpeg.outputs.sep }}."
           ct_gui.pyw
 
       - name: Smoke-test CLI binary (Unix)
