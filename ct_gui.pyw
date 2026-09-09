@@ -79,7 +79,7 @@ def launch_download(command):
 
 
 def build_download_command(url, selected_quality, download_mode="video"):
-    command = [str(get_console_python()), str(DOWNLOADER_SCRIPT), url]
+    command = get_downloader_command() + [url]
     if download_mode != "video":
         command.extend(["--mode", download_mode])
     if selected_quality != "Highest Available":
