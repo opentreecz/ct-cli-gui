@@ -7,7 +7,7 @@ import sys
 import urllib.request
 import uuid
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
 REQUEST_TIMEOUT = 30
@@ -232,95 +232,137 @@ def download_episode(
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             data = response.read().decode("utf-8")
-
-            if download_mode == "subtitles":
-                srt_filename = _download_subtitles(
-                    data, clean_title, subtitle_format, base_path=subtitle_stem
-                )
-                has_subs = srt_filename is not None
-                if not has_subs:
-                    print("[-] Subtitles not found for this episode.")
-                elif subtitle_format == "txt" and os.path.exists(srt_filename):
-                    # txt-only: keep only the .txt on disk.
-                    os.remove(srt_filename)
-                return
-
-            # Video mode: always produce the .srt for embedding; the txt/both
-            # companion is written too when requested.
-            srt_filename = _download_subtitles(
-                data, clean_title, subtitle_format, base_path=subtitle_stem
-            )
-            has_subs = srt_filename is not None
-
-            stream_match = re.search(r'"(https://[^"]+(?:token=[^"]+|m3u8|mpd[^"]*))"', data)
-            if not stream_match:
-                print("[-] Error: Stream URL not found. It may be DRM protected.")
-                if has_subs:
-                    os.remove(srt_filename)
-                return
-
-            stream_url = stream_match.group(1).replace("\\/", "/")
-
-            # --- YT-DLP DOWNLOAD ---
-            print("[+] Starting video download...")
-            command = [_resolve_tool("yt-dlp"), "-o", output_filename]
-
-            # Add resolution limit if specified
-            if quality:
-                command.extend(["-S", f"res:{quality}"])
-
-            command.append(stream_url)
-            result = subprocess.run(command, check=False)
-            if result.returncode != 0:
-                print("[-] Video download failed.")
-                if has_subs and os.path.exists(srt_filename):
-                    os.remove(srt_filename)
-                return
-
-            # --- SUBTITLE EMBEDDING ---
-            if has_subs and os.path.exists(output_filename):
-                print("[+] Embedding subtitles directly into the MP4 file...")
-                temp_video = artifact("temp.mp4")
-                os.rename(output_filename, temp_video)
-
-                ffmpeg_cmd = [
-                    _resolve_tool("ffmpeg"),
-                    "-i",
-                    temp_video,
-                    "-i",
-                    srt_filename,
-                    "-c",
-                    "copy",
-                    "-c:s",
-                    "mov_text",
-                    "-metadata:s:s:0",
-                    "language=cze",
-                    "-metadata:s:s:0",
-                    "title=Czech",
-                    output_filename,
-                    "-y",
-                ]
-
-                result = subprocess.run(
-                    ffmpeg_cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-                if result.returncode == 0 and os.path.exists(output_filename):
-                    os.remove(temp_video)
-                    print("[+] Subtitles successfully embedded!")
-                else:
-                    os.rename(temp_video, output_filename)
-                    print("[-] Failed to embed subtitles. Kept original video.")
-
-                # Honor external-file retention after embedding.
-                if subtitle_format == "txt" and os.path.exists(srt_filename):
-                    os.remove(srt_filename)
-                    print("[+] Kept external .txt subtitle only.")
-
     except (OSError, UnicodeDecodeError) as error:
         print(f"[-] Connection error getting stream: {error}")
+        return
+
+    if download_mode == "subtitles":
+        srt_filename = _download_subtitles(
+            data, clean_title, subtitle_format, base_path=subtitle_stem
+        )
+        has_subs = srt_filename is not None
+        if not has_subs:
+            print("[-] Subtitles not found for this episode.")
+        elif subtitle_format == "txt" and os.path.exists(srt_filename):
+            # txt-only: keep only the .txt on disk.
+            os.remove(srt_filename)
+        return
+
+    # Video mode: always produce the .srt for embedding; the txt/both
+    # companion is written too when requested.
+    srt_filename = _download_subtitles(data, clean_title, subtitle_format, base_path=subtitle_stem)
+    has_subs = srt_filename is not None
+
+    stream_match = re.search(
+        r'"(https://[^\"]+(?:token=[^\"]+|m3u8|mpd[^\"]*))"',
+        data,
+    )
+    if not stream_match:
+        print("[-] Error: Stream URL not found. It may be DRM protected.")
+        if has_subs:
+            os.remove(srt_filename)
+        return
+
+    stream_url = stream_match.group(1).replace("\\/", "/")
+
+    def _download_video(stream_url, output_filename, quality):
+        """Download the given stream URL to *output_filename* using yt-dlp's Python API.
+
+        This avoids requiring an external 'yt-dlp' executable, which is important
+        for standalone PyInstaller builds.
+        """
+
+        # Import here so unit tests can monkeypatch this helper without needing
+        # the real yt_dlp module.
+        import yt_dlp
+
+        ffmpeg_path = _resolve_tool("ffmpeg")
+        fmt = "bestvideo+bestaudio/best"
+        if quality:
+            # Cap the output to <= quality height when possible.
+            q = int(quality)
+            fmt = f"bestvideo[height<={q}]+bestaudio/best[height<={q}]/best"
+
+        ydl_opts = {
+            "outtmpl": output_filename,
+            "noplaylist": True,
+            "merge_output_format": "mp4",
+            "format": fmt,
+            "ffmpeg_location": ffmpeg_path,
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.download([stream_url])
+
+    # --- YT-DLP DOWNLOAD (Python API) ---
+    print("[+] Starting video download...")
+    try:
+        rc = _download_video(stream_url, output_filename, quality)
+    except FileNotFoundError as error:
+        # Typically missing ffmpeg in a frozen bundle.
+        print(f"[-] Missing dependency required for download: {error}")
+        if has_subs and os.path.exists(srt_filename):
+            os.remove(srt_filename)
+        return
+    except Exception as error:
+        print(f"[-] Video download failed: {error}")
+        if has_subs and os.path.exists(srt_filename):
+            os.remove(srt_filename)
+        return
+
+    if rc not in (0, None) or not os.path.exists(output_filename):
+        print("[-] Video download failed.")
+        if has_subs and os.path.exists(srt_filename):
+            os.remove(srt_filename)
+        return
+
+    # --- SUBTITLE EMBEDDING ---
+    if has_subs and os.path.exists(output_filename):
+        print("[+] Embedding subtitles directly into the MP4 file...")
+        temp_video = artifact("temp.mp4")
+        os.rename(output_filename, temp_video)
+
+        ffmpeg_cmd = [
+            _resolve_tool("ffmpeg"),
+            "-i",
+            temp_video,
+            "-i",
+            srt_filename,
+            "-c",
+            "copy",
+            "-c:s",
+            "mov_text",
+            "-metadata:s:s:0",
+            "language=cze",
+            "-metadata:s:s:0",
+            "title=Czech",
+            output_filename,
+            "-y",
+        ]
+
+        try:
+            result = subprocess.run(
+                ffmpeg_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError as error:
+            os.rename(temp_video, output_filename)
+            print(f"[-] Failed to embed subtitles: {error}")
+            return
+
+        if result.returncode == 0 and os.path.exists(output_filename):
+            os.remove(temp_video)
+            print("[+] Subtitles successfully embedded!")
+        else:
+            os.rename(temp_video, output_filename)
+            print("[-] Failed to embed subtitles. Kept original video.")
+
+        # Honor external-file retention after embedding.
+        if subtitle_format == "txt" and os.path.exists(srt_filename):
+            os.remove(srt_filename)
+            print("[+] Kept external .txt subtitle only.")
 
 
 _SUBTITLE_FORMAT_SYNONYMS = {
@@ -412,6 +454,15 @@ def process_url(url, quality, mode, subtitle_format, organize):
 
         matches = re.findall(rf"{series_path}/(\d{{10,}})/?", html)
         if not matches:
+            # Some 'porady' pages are single movies and don't list episodes.
+            idec_match = re.search(r"IDEC=(\d{10,})", html)
+            if idec_match:
+                vid_id = idec_match.group(1)
+                ep_url = f"{SITE_URL}{series_path}/{vid_id}/"
+                print("[+] Single-video page detected. Downloading...")
+                download_episode(ep_url, quality, mode, subtitle_format, organize)
+                return
+
             print("[-] No episodes found on this page.")
             return
 

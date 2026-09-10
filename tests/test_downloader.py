@@ -1,4 +1,6 @@
 import os
+import sys
+import types
 
 import ct_downloader
 
@@ -195,31 +197,33 @@ def test_download_episode_passes_quality_to_ytdlp(monkeypatch, tmp_path):
         def read(self):
             return b'{"stream": "https://media.example/episode.mpd"}'
 
-    commands = []
-
-    def run(command, **kwargs):
-        commands.append(command)
-        (tmp_path / "Series - S1E01 - Episode.mp4").touch()
-        return type("Result", (), {"returncode": 0})()
+    calls = []
 
     monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
-    monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+
+    class DummyYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def download(self, urls):
+            calls.append((urls[0], self.opts["outtmpl"], "720"))
+            (tmp_path / self.opts["outtmpl"]).touch()
+            return 0
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=DummyYDL))
 
     ct_downloader.download_episode(
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         quality="720",
     )
 
-    assert commands == [
-        [
-            "yt-dlp",
-            "-o",
-            "Series - S1E01 - Episode.mp4",
-            "-S",
-            "res:720",
-            "https://media.example/episode.mpd",
-        ]
-    ]
+    assert calls == [("https://media.example/episode.mpd", "Series - S1E01 - Episode.mp4", "720")]
 
 
 def test_download_episode_embeds_subtitles(monkeypatch, tmp_path, capsys):
@@ -251,13 +255,27 @@ def test_download_episode_embeds_subtitles(monkeypatch, tmp_path, capsys):
 
     def run(command, **kwargs):
         calls.append(command)
-        if command[0] == "yt-dlp":
-            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
-        elif len(command) > 5:
+        if len(command) > 5:
             (tmp_path / "Series - S1E01 - Episode.mp4").write_text("embedded")
         else:
             (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text("converted")
         return type("Result", (), {"returncode": 0})()
+
+    class DummyYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def download(self, urls):
+            (tmp_path / self.opts["outtmpl"]).write_text("video")
+            return 0
+
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=DummyYDL))
 
     monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
     monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
@@ -265,7 +283,7 @@ def test_download_episode_embeds_subtitles(monkeypatch, tmp_path, capsys):
 
     ct_downloader.download_episode("https://www.ceskatelevize.cz/porady/123-show/12345678901/")
 
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert "Subtitles successfully embedded" in capsys.readouterr().out
 
 
@@ -293,6 +311,30 @@ def test_main_dispatches_series_episodes(monkeypatch):
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
         "https://www.ceskatelevize.cz/porady/123-show/12345678902/",
     ]
+
+
+def test_process_url_series_falls_back_to_idec_single_video(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        ct_downloader,
+        "download_episode",
+        lambda url, quality, mode, subtitle_format, organize: called.append(url),
+    )
+    monkeypatch.setattr(
+        ct_downloader,
+        "get_html",
+        lambda url: '<meta property="og:video" content="https://player.example/?IDEC=12345678901">',
+    )
+
+    ct_downloader.process_url(
+        "https://www.ceskatelevize.cz/porady/123-show/",
+        quality=None,
+        mode="video",
+        subtitle_format="srt",
+        organize=False,
+    )
+
+    assert called == ["https://www.ceskatelevize.cz/porady/123-show/12345678901/"]
 
 
 def test_download_episode_skips_existing_file(monkeypatch, tmp_path, capsys):
@@ -543,15 +585,30 @@ def test_download_episode_restores_video_when_subtitle_embedding_fails(
         (tmp_path / filename).write_text("subtitle")
 
     def run(command, **kwargs):
-        if command[0] == "yt-dlp":
-            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
-            return type("Result", (), {"returncode": 0})()
-        (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text("converted")
+        # vtt -> srt conversion
+        if len(command) <= 5:
+            (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text("converted")
+        # embedding step fails
         return type("Result", (), {"returncode": 1})()
+
+    class DummyYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def download(self, urls):
+            (tmp_path / self.opts["outtmpl"]).write_text("video")
+            return 0
 
     monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
     monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
     monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=DummyYDL))
 
     ct_downloader.download_episode("https://www.ceskatelevize.cz/porady/123-show/12345678901/")
 
@@ -756,9 +813,7 @@ def test_download_episode_video_mode_with_srt_txt_writes_txt(monkeypatch, tmp_pa
         (tmp_path / filename).write_text("vtt")
 
     def run(command, **kwargs):
-        if command[0] == "yt-dlp":
-            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
-        elif len(command) > 5:
+        if len(command) > 5:
             (tmp_path / "Series - S1E01 - Episode.mp4").write_text("embedded")
         else:
             (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text(
@@ -766,9 +821,24 @@ def test_download_episode_video_mode_with_srt_txt_writes_txt(monkeypatch, tmp_pa
             )
         return type("Result", (), {"returncode": 0})()
 
+    class DummyYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def download(self, urls):
+            (tmp_path / self.opts["outtmpl"]).write_text("video")
+            return 0
+
     monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
     monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
     monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=DummyYDL))
 
     ct_downloader.download_episode(
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
@@ -807,9 +877,7 @@ def test_download_episode_video_mode_txt_only_removes_external_srt(monkeypatch, 
         (tmp_path / filename).write_text("vtt")
 
     def run(command, **kwargs):
-        if command[0] == "yt-dlp":
-            (tmp_path / "Series - S1E01 - Episode.mp4").write_text("video")
-        elif len(command) > 5:
+        if len(command) > 5:
             (tmp_path / "Series - S1E01 - Episode.mp4").write_text("embedded")
         else:
             (tmp_path / "Series - S1E01 - Episode.cs.srt").write_text(
@@ -817,9 +885,24 @@ def test_download_episode_video_mode_txt_only_removes_external_srt(monkeypatch, 
             )
         return type("Result", (), {"returncode": 0})()
 
+    class DummyYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def download(self, urls):
+            (tmp_path / self.opts["outtmpl"]).write_text("video")
+            return 0
+
     monkeypatch.setattr(ct_downloader.urllib.request, "urlopen", lambda *args, **kwargs: Response())
     monkeypatch.setattr(ct_downloader.urllib.request, "urlretrieve", download)
     monkeypatch.setattr(ct_downloader.subprocess, "run", run)
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=DummyYDL))
 
     ct_downloader.download_episode(
         "https://www.ceskatelevize.cz/porady/123-show/12345678901/",
