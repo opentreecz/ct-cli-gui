@@ -149,17 +149,8 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPO}/releases/tags/${TAG}")
 
-          release_id=$(python3 - <<'PY'
-import json,sys
-print(json.loads(sys.stdin.read())['id'])
-PY
-          <<<"$release_json")
-          upload_url=$(python3 - <<'PY'
-import json,sys
-u=json.loads(sys.stdin.read())['upload_url']
-print(u.split('{',1)[0])
-PY
-          <<<"$release_json")
+          release_id=$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["id"])' <<<"$release_json")
+          upload_url=$(python3 -c 'import json,sys; u=json.loads(sys.stdin.read())["upload_url"]; print(u.split("{",1)[0])' <<<"$release_json")
 
           existing_assets=$(curl -sS \
             -H "Accept: application/vnd.github+json" \
@@ -170,17 +161,7 @@ PY
           for f in artifacts/*; do
             name=$(basename "$f")
 
-            asset_id=$(TARGET="$name" python3 - <<'PY' <<<"$existing_assets"
-import json,sys,os
-assets=json.loads(sys.stdin.read())
-target=os.environ['TARGET']
-for a in assets:
-    if a.get('name')==target:
-        print(a.get('id'))
-        raise SystemExit(0)
-print('')
-PY
-            )
+            asset_id=$(TARGET="$name" python3 -c 'import json,sys,os; assets=json.loads(sys.stdin.read()); t=os.environ["TARGET"]; print(next((a.get("id") for a in assets if a.get("name")==t), ""))' <<<"$existing_assets")
 
             if [ -n "$asset_id" ]; then
               curl -sS -X DELETE \
