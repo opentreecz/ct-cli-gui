@@ -71,35 +71,71 @@ def parse_urls(raw_text):
     return [token for token in tokens if token]
 
 
+def _shell_command_with_pause(command, cwd):
+    """Return a POSIX shell command string that runs *command* in *cwd* and
+    pauses at the end so the terminal window stays open."""
+    inner = " ".join(shlex.quote(argument) for argument in command)
+    return (
+        f"cd {shlex.quote(str(cwd))} && {inner}; "
+        'echo; read -p "Press Enter to close..."'
+    )
+
+
+# Terminals that follow the xterm convention (command passed via -e).
+_XTERM_STYLE_TERMINALS = ("x-terminal-emulator", "konsole", "xfce4-terminal")
+# Terminals that accept a command after a -- separator.
+_DASH_STYLE_TERMINALS = ("gnome-terminal",)
+
+
+def _find_linux_terminal():
+    for candidate in (
+        "gnome-terminal",
+        "konsole",
+        "xfce4-terminal",
+        "x-terminal-emulator",
+    ):
+        if shutil.which(candidate):
+            return candidate
+    return None
+
+
 def launch_download(command, cwd):
     options = {"cwd": cwd}
     if sys.platform == "win32":
         options["creationflags"] = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-    elif sys.platform == "darwin":
-        shell_command = " ".join(shlex.quote(argument) for argument in command)
-        shell_command = f"cd {shlex.quote(str(cwd))} && {shell_command}"
-        command = [
+        # Keep the console open after the run so output/errors are visible.
+        inner = subprocess.list2cmdline(command)
+        launch = ["cmd", "/k", inner]
+        subprocess.Popen(launch, **options)
+        return
+    if sys.platform == "darwin":
+        shell_command = _shell_command_with_pause(command, cwd)
+        launch = [
             "osascript",
             "-e",
             f'tell app "Terminal" to do script {json.dumps(shell_command)}',
         ]
-    elif sys.platform.startswith("linux"):
-        terminal = next(
-            (
-                candidate
-                for candidate in (
-                    "x-terminal-emulator",
-                    "gnome-terminal",
-                    "konsole",
-                    "xfce4-terminal",
-                )
-                if shutil.which(candidate)
-            ),
-            None,
-        )
+        subprocess.Popen(launch, **options)
+        return
+    if sys.platform.startswith("linux"):
+        terminal = _find_linux_terminal()
         if terminal:
-            command = [terminal, "--"] + command
+            shell_command = _shell_command_with_pause(command, cwd)
+            if terminal in _DASH_STYLE_TERMINALS:
+                launch = [terminal, "--", "sh", "-c", shell_command]
+            else:
+                # xterm-style terminals (incl. the gnome-terminal.wrapper behind
+                # x-terminal-emulator) expect the command via -e.
+                launch = [terminal, "-e", f"sh -c {shlex.quote(shell_command)}"]
+            try:
+                subprocess.Popen(launch, **options)
+                return
+            except OSError:
+                pass  # fall through to headless run
+    # Fallback: no terminal available (or launch failed) — run headless so the
+    # download still proceeds.
     subprocess.Popen(command, **options)
+
 
 
 def build_download_command(
