@@ -139,4 +139,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la artifacts/
-          gh release upload v1.3.3 artifacts/* --clobber
+          gh release upload v1.3.3 artifacts/* --clobber --repo "${{ github.repository }}"
