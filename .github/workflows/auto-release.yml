@@ -41,6 +41,7 @@ jobs:
 
       - name: Create tag and release
         if: steps.check.outputs.exists == 'false'
+        id: create
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -50,3 +51,16 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch binary builds
+        if: steps.create.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub blocks tag-push and release:published events from the
+          # default token.  workflow_dispatch via the API is not blocked.
+          gh workflow run binaries.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ steps.create.outputs.tag }}"
