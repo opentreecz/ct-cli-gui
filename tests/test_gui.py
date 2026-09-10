@@ -197,6 +197,7 @@ def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch,
         ["python", "ct_downloader.py", "https://example.test"], cwd=str(tmp_path)
     )
 
+    # No terminal available -> fall back to running headless.
     assert calls == [
         (
             ["python", "ct_downloader.py", "https://example.test"],
@@ -205,7 +206,32 @@ def test_launch_download_uses_direct_process_when_no_linux_terminal(monkeypatch,
     ]
 
 
-def test_launch_download_uses_linux_terminal(monkeypatch, tmp_path):
+def test_launch_download_falls_back_when_terminal_launch_fails(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(ct_gui.sys, "platform", "linux")
+    monkeypatch.setattr(
+        ct_gui.shutil,
+        "which",
+        lambda name: "/usr/bin/gnome-terminal" if name == "gnome-terminal" else None,
+    )
+
+    def popen(command, **options):
+        # First call = terminal launch, raise to trigger fallback.
+        if not calls:
+            calls.append((command, options))
+            raise OSError("no display")
+        calls.append((command, options))
+
+    monkeypatch.setattr(ct_gui.subprocess, "Popen", popen)
+
+    ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
+
+    # Second (fallback) call runs the raw command headless.
+    assert calls[-1][0] == ["python", "ct_downloader.py"]
+
+
+def test_launch_download_gnome_terminal_uses_dash_and_pause(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(ct_gui.sys, "platform", "linux")
     monkeypatch.setattr(
@@ -221,7 +247,75 @@ def test_launch_download_uses_linux_terminal(monkeypatch, tmp_path):
 
     ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
 
-    assert calls[0][0] == ["gnome-terminal", "--", "python", "ct_downloader.py"]
+    launched = calls[0][0]
+    assert launched[0] == "gnome-terminal"
+    assert launched[1] == "--"
+    assert launched[2:4] == ["sh", "-c"]
+    assert "python ct_downloader.py" in launched[4]
+    assert "Press Enter to close" in launched[4]
+
+
+def test_launch_download_xterm_style_uses_e_flag_and_pause(monkeypatch, tmp_path):
+    """x-terminal-emulator (gnome-terminal.wrapper) must use -e, not --."""
+    calls = []
+    monkeypatch.setattr(ct_gui.sys, "platform", "linux")
+    monkeypatch.setattr(
+        ct_gui.shutil,
+        "which",
+        lambda name: "/usr/bin/x-terminal-emulator" if name == "x-terminal-emulator" else None,
+    )
+    monkeypatch.setattr(
+        ct_gui.subprocess,
+        "Popen",
+        lambda command, **options: calls.append((command, options)),
+    )
+
+    ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
+
+    launched = calls[0][0]
+    assert launched[0] == "x-terminal-emulator"
+    assert launched[1] == "-e"
+    # The command must be preserved (regression: it used to be dropped via --).
+    assert "python ct_downloader.py" in launched[2]
+    assert "Press Enter to close" in launched[2]
+    assert "--" not in launched
+
+
+def test_launch_download_prefers_gnome_terminal_over_xterm_shim(monkeypatch, tmp_path):
+    """When both exist, prefer gnome-terminal over the x-terminal-emulator shim."""
+    calls = []
+    monkeypatch.setattr(ct_gui.sys, "platform", "linux")
+    monkeypatch.setattr(ct_gui.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        ct_gui.subprocess,
+        "Popen",
+        lambda command, **options: calls.append((command, options)),
+    )
+
+    ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
+
+    assert calls[0][0][0] == "gnome-terminal"
+
+
+def test_launch_download_konsole_uses_e_flag(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(ct_gui.sys, "platform", "linux")
+    monkeypatch.setattr(
+        ct_gui.shutil,
+        "which",
+        lambda name: "/usr/bin/konsole" if name == "konsole" else None,
+    )
+    monkeypatch.setattr(
+        ct_gui.subprocess,
+        "Popen",
+        lambda command, **options: calls.append((command, options)),
+    )
+
+    ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
+
+    launched = calls[0][0]
+    assert launched[0] == "konsole"
+    assert launched[1] == "-e"
 
 
 def test_launch_download_uses_macos_terminal(monkeypatch, tmp_path):
@@ -237,6 +331,7 @@ def test_launch_download_uses_macos_terminal(monkeypatch, tmp_path):
 
     assert calls[0][0][0] == "osascript"
     assert "Terminal" in calls[0][0][2]
+    assert "Press Enter to close" in calls[0][0][2]
 
 
 def test_get_console_python_uses_python_on_windows(monkeypatch):
@@ -257,6 +352,9 @@ def test_launch_download_uses_windows_console(monkeypatch, tmp_path):
 
     ct_gui.launch_download(["python", "ct_downloader.py"], cwd=str(tmp_path))
 
+    # Windows keeps the console open via cmd /k.
+    assert calls[0][0][0] == "cmd"
+    assert calls[0][0][1] == "/k"
     assert calls[0][1] == {
         "cwd": str(tmp_path),
         "creationflags": getattr(ct_gui.subprocess, "CREATE_NEW_CONSOLE", 0),
