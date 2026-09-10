@@ -7,7 +7,7 @@ import sys
 import urllib.request
 import uuid
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
 REQUEST_TIMEOUT = 30

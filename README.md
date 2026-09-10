@@ -172,14 +172,17 @@ platform and run it directly — no installation needed.
 |---|---|---|
 | Linux AMD64 | `ct-dlp-linux-amd64` | `ct-gui-linux-amd64` |
 | Linux ARM64 | `ct-dlp-linux-arm64` | `ct-gui-linux-arm64` |
-| macOS Intel | `ct-dlp-macos-amd64` | `ct-gui-macos-amd64` |
 | macOS Apple Silicon | `ct-dlp-macos-arm64` | `ct-gui-macos-arm64` |
 | Windows AMD64 | `ct-dlp-windows-amd64.exe` | `ct-gui-windows-amd64.exe` |
 
-> **Note:** Binaries are unsigned and may trigger Gatekeeper (macOS) or
-> SmartScreen (Windows) warnings on first run. On macOS, right-click and
-> choose **Open** to bypass the warning. On Windows, click **More info** →
-> **Run anyway**.
+> **Note:** macOS Intel (x86_64) binaries are not available — GitHub-hosted
+> Intel-Mac runners are unavailable. Intel Mac users can install via PyPI
+> (`pip install ct-cli-gui`) or run from source; the Apple Silicon binary
+> also works on Intel Macs via Rosetta 2.
+>
+> Binaries are unsigned and may trigger Gatekeeper (macOS) or SmartScreen
+> (Windows) warnings on first run. On macOS, right-click → **Open**. On
+> Windows, click **More info** → **Run anyway**.
 
 ## 💻 Usage
 
