@@ -7,7 +7,7 @@ import sys
 import urllib.request
 import uuid
 
-__version__ = "1.3.3"
+__version__ = "1.3.4"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
 REQUEST_TIMEOUT = 30
@@ -50,6 +50,9 @@ def parse_episode_title(raw_title):
     Season is always 1 (Ceska televize titles do not expose a season number).
     """
     name = raw_title.split("|")[0].strip()
+    # Some pages use "<Title> - iVysilani" as the full title; strip the site suffix.
+    name = re.sub(r"\s+-\s+iVysílání\s*$", "", name)
+    name = re.sub(r"\s+-\s+iVysilani\s*$", "", name)
     parts = name.split(" - ")
     if len(parts) >= 2:
         series_name = parts[-1].strip()
@@ -289,6 +292,13 @@ def download_episode(
             "merge_output_format": "mp4",
             "format": fmt,
             "ffmpeg_location": ffmpeg_path,
+            "http_headers": {"User-Agent": USER_AGENT},
+            # Be resilient to flaky CDN fragments; avoid producing silently corrupted output.
+            "socket_timeout": 60,
+            "retries": 10,
+            "fragment_retries": 50,
+            "extractor_retries": 3,
+            "abort_on_unavailable_fragments": True,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
